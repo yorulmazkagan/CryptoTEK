@@ -1,0 +1,81 @@
+[package]
+name        = "q-adaptive-zk"
+version     = "0.1.0"
+edition     = "2021"
+authors     = ["Q-ADAPTIVE Team <q-adaptive@blockchain.dev>"]
+description = "ZK-STARK kanıt motoru — Eray'ın post-kuantum imzalarını Winterfell STARK kanıtlarına sıkıştırır"
+repository  = "https://github.com/q-adaptive/Q-Adaptive-ZK"
+license     = "MIT"
+keywords    = ["zk-stark", "post-quantum", "blockchain", "winterfell", "cryptography"]
+categories  = ["cryptography", "mathematics"]
+
+# ==============================================================================
+# Winterfell STARK Bağımlılıkları (v0.13.1 — Facebook Research)
+# ==============================================================================
+# Modüler mimari: her alt crate yalnızca ihtiyaç duyulan bileşeni içerir.
+#
+#   winter-math    → Sonlu alan aritmetiği (BaseElement, prime fields)
+#   winter-crypto  → Hash fonksiyonları, Merkle ağaçları, FRI commit şeması
+#   winter-air     → AIR kısıtlama tanımları (AirContext, EvaluationFrame)
+#   winter-prover  → STARK kanıt üreticisi (Prover trait, StarkDomain)
+#   winter-verifier→ Kanıt doğrulayıcı (verify() fonksiyonu)
+#   winter-utils   → Yardımcı araçlar (serialization, iterators)
+#   winterfell     → Tüm alt crate'leri birleştiren üst kütüphane (re-export)
+# ==============================================================================
+
+[dependencies]
+
+# ── Winterfell Alt Crate'leri (Granüler Kontrol) ──────────────────────────────
+winter-math     = { version = "0.13.1", features = ["std"] }
+winter-crypto   = { version = "0.13.1", features = ["std"] }
+winter-air      = { version = "0.13.1", features = ["std"] }
+winter-prover   = { version = "0.13.1", features = ["std"] }
+winter-verifier = { version = "0.13.1", features = ["std"] }
+winter-utils    = { version = "0.13.1", features = ["std"] }
+
+# ── Üst Şemsiye Crate (Kolaylık Exportları İçin) ─────────────────────────────
+winterfell = { version = "0.13.1", features = ["std"] }
+
+# ── Seri Hale Getirme (Metadata JSON I/O) ────────────────────────────────────
+serde       = { version = "1.0", features = ["derive"] }
+serde_json  = "1.0"
+
+# ── Performans & Loglama ──────────────────────────────────────────────────────
+log         = { version = "0.4" }
+env_logger  = { version = "0.11" }
+hex = "0.4.3"
+
+# ==============================================================================
+# Derleme Profilleri
+# ==============================================================================
+
+[profile.dev]
+# Geliştirme: hızlı derleme, debug bilgisi açık
+opt-level   = 1       # Minimal optimizasyon (sıfırdan biraz daha hızlı)
+debug       = true
+overflow-checks = true
+
+[profile.release]
+# Üretim: maksimum kriptografik performans
+opt-level   = 3       # Tam optimizasyon (STARK kanıt üretimi CPU-yoğun)
+lto         = true    # Link-time optimization — özellikle kritik
+codegen-units = 1     # Tek kod-üretim birimi → daha iyi LTO
+panic       = "abort" # Küçük ikili boyutu + panic overhead yok
+debug       = false
+strip       = true    # Debug sembollerini çıkar
+
+[profile.bench]
+# Kıyaslama: release profili gibi ama debug bilgisi açık
+inherits    = "release"
+debug       = true
+
+# ==============================================================================
+# Geliştirici Araçları Metadata
+# ==============================================================================
+
+[package.metadata.docs.rs]
+all-features = true
+
+[[bin]]
+name = "q-adaptive-zk"
+path = "src/main.rs"

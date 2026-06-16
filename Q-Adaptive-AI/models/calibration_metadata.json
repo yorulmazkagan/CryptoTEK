@@ -1,0 +1,21 @@
+{
+  "project": "Q-ADAPTIVE AI Guardian",
+  "phase": "Aşama 4 — ONNX On-Device Inference",
+  "mean_d": 0.12508538,
+  "std_d": 0.0546789,
+  "risk_threshold": 75.0,
+  "training_rows": 2000,
+  "feature_columns": [
+    "Islem_Sikligi",
+    "IP_Sapmasi",
+    "Gas_Sapmasi"
+  ],
+  "feature_order": "CRITICAL: Features must be passed in this exact order: [Islem_Sikligi, IP_Sapmasi, Gas_Sapmasi]",
+  "risk_formula": "z = (onnx_score - mean_d) / std_d; risk_pct = (1 - norm_cdf(z)) * 100; risk_pct = clamp(risk_pct, 0, 100)",
+  "onnx_output_map": {
+    "label": "int64 — 1=normal, -1=anomaly (IsolationForest prediction)",
+    "scores": "float32 — raw decision_function value (use this for z-score)"
+  },
+  "alarm_logic": "IF risk_pct > 75 → TRIGGER_PANIC_MODE (ML-DSA-87 Heavy Armor) ELSE → SAFE (ML-DSA-44 Light Armor)",
+  "javascript_snippet": "// Browser / WASM istemci için örnek implementasyon:\n// function normCdf(z) { return 0.5*(1+erf(z/Math.sqrt(2))); }\n// function calcRisk(onnxScore, meanD, stdD) {\n//   const z = (onnxScore - meanD) / stdD;\n//   return Math.min(100, Math.max(0, (1 - normCdf(z)) * 100));\n// }"
+}

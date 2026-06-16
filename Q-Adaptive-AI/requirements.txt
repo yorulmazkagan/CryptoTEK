@@ -1,0 +1,24 @@
+# =============================================================================
+# Q-ADAPTIVE AI Guardian — Python Bağımlılıkları
+# =============================================================================
+# Kurulum: pip install -r requirements.txt
+# Python sürümü: >= 3.10 önerilir
+# =============================================================================
+
+# ── Veri Bilimi Çekirdeği ─────────────────────────────────────────────────────
+numpy>=1.24.0,<2.0.0          # Gaussian veri üretimi, vektör işlemleri
+pandas>=2.0.0,<3.0.0          # DataFrame yönetimi, CSV I/O
+scikit-learn>=1.3.0,<2.0.0    # Isolation Forest (Aşama 2), model eğitimi
+scipy>=1.11.0,<2.0.0          # Normal CDF — z-skoru bazlı risk kalibrasyon motoru
+joblib>=1.3.0,<2.0.0          # Model serileştirme / deserileştirme (Aşama 3)
+
+# ── ONNX Dönüşümü & Cihaz İçi Çıkarım (Aşama 4) ──────────────────────────────
+skl2onnx>=1.16.0              # scikit-learn → ONNX dönüştürücü
+onnxruntime>=1.18.0           # Cross-platform ONNX çalışma zamanı (CPU/GPU/Edge)
+
+# ── API Katmanı (Aşama 3: REST Entegrasyonu) ──────────────────────────────────
+fastapi>=0.111.0,<1.0.0       # MTD tetikleyici API endpoint'leri
+uvicorn[standard]>=0.29.0     # ASGI sunucusu (FastAPI çalıştırma motoru)
+
+# ── Ağ & Dış Servis Bağlantısı ───────────────────────────────────────────────
+requests>=2.31.0,<3.0.0       # HTTP istemcisi (blockchain RPC, webhook çağrıları)
