@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+
+<html class="light" lang="tr"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Q-ADAPTIVE AI Guardian v2.4 - Live Telemetry</title>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Config from Guidelines -->
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-tertiary-container": "#7d0023",
+                        "surface": "#f8f9ff",
+                        "on-tertiary-fixed": "#40000d",
+                        "tertiary-fixed-dim": "#ffb2b7",
+                        "on-primary-fixed": "#001f26",
+                        "on-tertiary-fixed-variant": "#92002a",
+                        "on-primary": "#ffffff",
+                        "surface-container": "#e5eeff",
+                        "tertiary": "#bc0b3b",
+                        "inverse-primary": "#4cd7f6",
+                        "error-container": "#ffdad6",
+                        "on-error": "#ffffff",
+                        "surface-tint": "#00687a",
+                        "tertiary-fixed": "#ffdadb",
+                        "tertiary-container": "#ff7f8b",
+                        "secondary": "#006c49",
+                        "surface-container-high": "#dce9ff",
+                        "surface-variant": "#d3e4fe",
+                        "surface-container-highest": "#d3e4fe",
+                        "background": "#f8f9ff",
+                        "on-secondary": "#ffffff",
+                        "on-secondary-fixed": "#002113",
+                        "on-surface-variant": "#3d494c",
+                        "secondary-fixed": "#6ffbbe",
+                        "on-error-container": "#93000a",
+                        "on-tertiary": "#ffffff",
+                        "primary-fixed": "#acedff",
+                        "on-background": "#0b1c30",
+                        "on-secondary-container": "#00714d",
+                        "on-primary-fixed-variant": "#004e5c",
+                        "surface-container-low": "#eff4ff",
+                        "primary-container": "#06b6d4",
+                        "error": "#ba1a1a",
+                        "surface-bright": "#f8f9ff",
+                        "secondary-fixed-dim": "#4edea3",
+                        "inverse-on-surface": "#eaf1ff",
+                        "surface-container-lowest": "#ffffff",
+                        "on-surface": "#0b1c30",
+                        "outline-variant": "#bcc9cd",
+                        "secondary-container": "#6cf8bb",
+                        "outline": "#6d797d",
+                        "on-primary-container": "#00424f",
+                        "on-secondary-fixed-variant": "#005236",
+                        "primary": "#00687a",
+                        "surface-dim": "#cbdbf5",
+                        "primary-fixed-dim": "#4cd7f6",
+                        "inverse-surface": "#213145"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "stack-md": "1rem",
+                        "stack-sm": "0.5rem",
+                        "section-padding": "4rem",
+                        "gutter": "1.5rem",
+                        "grid-margin": "2rem",
+                        "stack-lg": "2rem"
+                    },
+                    "fontFamily": {
+                        "headline-lg-mobile": ["Geist", "sans-serif"],
+                        "label-md": ["Geist", "sans-serif"],
+                        "mono-data": ["Geist Mono", "monospace"],
+                        "body-md": ["Inter", "sans-serif"],
+                        "display-lg": ["Geist", "sans-serif"],
+                        "headline-md": ["Geist", "sans-serif"],
+                        "headline-lg": ["Geist", "sans-serif"],
+                        "body-lg": ["Inter", "sans-serif"]
+                    },
+                    "fontSize": {
+                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "label-md": ["14px", { "lineHeight": "20px", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "mono-data": ["13px", { "lineHeight": "18px", "fontWeight": "400" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "display-lg": ["48px", { "lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "body-lg": ["18px", { "lineHeight": "28px", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+        /* Base Glassmorphism utility */
+        .glass-panel {
+            background-color: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        
+        /* Neon Accents */
+        .neon-divider {
+            height: 2px;
+            background: linear-gradient(to right, #4cd7f6, transparent);
+        }
+        .neon-divider-panic {
+            height: 2px;
+            background: linear-gradient(to right, #ba1a1a, transparent);
+        }
+
+        /* Status Animations */
+        @keyframes safePulse {
+            0% { box-shadow: 0 0 10px rgba(6,182,212,0.2); }
+            50% { box-shadow: 0 0 20px rgba(6,182,212,0.4); }
+            100% { box-shadow: 0 0 10px rgba(6,182,212,0.2); }
+        }
+        .safe-mode-active {
+            animation: safePulse 3s infinite;
+        }
+
+        @keyframes panicPulse {
+            0% { box-shadow: 0 0 15px rgba(244,63,94,0.3); border-color: rgba(244,63,94,0.5); }
+            50% { box-shadow: 0 0 30px rgba(244,63,94,0.6); border-color: rgba(244,63,94,1); }
+            100% { box-shadow: 0 0 15px rgba(244,63,94,0.3); border-color: rgba(244,63,94,0.5); }
+        }
+        .panic-mode-active {
+            animation: panicPulse 1s infinite;
+            border-color: rgba(244,63,94,0.5) !important;
+        }
+        
+        .panic-text {
+            color: #ba1a1a !important;
+        }
+        .panic-bg {
+            background-color: #ffdad6 !important;
+        }
+    </style>
+</head>
+<body class="bg-surface text-on-surface antialiased font-body-md overflow-x-hidden min-h-screen">
+<!-- TopNavBar -->
+<nav class="fixed top-0 right-0 left-64 h-16 z-40 border-b border-slate-200/50 bg-white/70 backdrop-blur-md shadow-[0_0_15px_rgba(6,182,212,0.12)] flex items-center justify-between px-8 w-full max-w-full transition-all duration-300" id="top-nav">
+<div class="flex items-center space-x-4">
+<span class="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed tracking-tight">Q-ADAPTIVE</span>
+<div class="h-6 w-px bg-slate-300"></div>
+<!-- Dynamic Banner -->
+<div class="flex items-center space-x-2 px-4 py-1 rounded-full border border-secondary/30 shadow-[0_0_10px_rgba(0,108,73,0.2)] bg-surface-container transition-all duration-300" id="status-banner">
+<span class="material-symbols-outlined text-secondary" id="status-icon" style="font-variation-settings: 'FILL' 1;">shield</span>
+<span class="font-label-md text-label-md text-secondary font-bold uppercase tracking-wider" id="status-text">SİSTEM GÜVENLİ - LIGHT ARMOR ACTIVE (ML-DSA-44)</span>
+</div>
+</div>
+<div class="flex items-center space-x-4">
+<button class="text-on-surface-variant hover:text-primary transition-all hover:shadow-lg active:scale-95 duration-150 p-2 rounded-full">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="text-on-surface-variant hover:text-primary transition-all hover:shadow-lg active:scale-95 duration-150 p-2 rounded-full">
+<span class="material-symbols-outlined">account_circle</span>
+</button>
+</div>
+</nav>
+<!-- SideNavBar -->
+<aside class="h-screen w-64 fixed left-0 top-0 border-r border-slate-200/50 bg-white/70 backdrop-blur-md shadow-[0_0_15px_rgba(0,104,122,0.08)] flex flex-col h-full py-6 px-4 z-50">
+<div class="mb-8 px-2 flex items-center space-x-3">
+<div class="w-10 h-10 rounded-full bg-primary-container flex items-center justify-center text-on-primary-container shadow-[0_0_10px_rgba(6,182,212,0.3)]">
+<span class="material-symbols-outlined">security</span>
+</div>
+<div>
+<h1 class="font-headline-md text-headline-md font-bold text-primary tracking-tight leading-tight">Q-ADAPTIVE</h1>
+<p class="font-label-md text-label-md text-on-surface-variant opacity-80">AI Guardian v2.4</p>
+</div>
+</div>
+<nav class="flex-1 space-y-2">
+<!-- Active Tab: Live Telemetry -->
+<a class="flex items-center space-x-3 px-4 py-3 rounded-lg text-primary font-bold border-r-2 border-primary bg-primary-container/20 active:scale-95 duration-150 transition-all group" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">radar</span>
+<span class="font-label-md text-label-md">Canlı Telemetri</span>
+</a>
+<a class="flex items-center space-x-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-slate-100/50 transition-all active:scale-95 duration-150 group" href="#">
+<span class="material-symbols-outlined">terminal</span>
+<span class="font-label-md text-label-md">Simülasyon Enjektörü</span>
+</a>
+<a class="flex items-center space-x-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-slate-100/50 transition-all active:scale-95 duration-150 group" href="#">
+<span class="material-symbols-outlined">security</span>
+<span class="font-label-md text-label-md">ZK-STARK Mantığı</span>
+</a>
+<a class="flex items-center space-x-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-slate-100/50 transition-all active:scale-95 duration-150 group" href="#">
+<span class="material-symbols-outlined">back_hand</span>
+<span class="font-label-md text-label-md">Zincir İçi İzleyici</span>
+</a>
+</nav>
+<div class="mt-auto pt-6">
+<div class="glass-panel border border-slate-200/50 rounded-xl p-4 mb-4" id="sim-injector-card">
+<h3 class="font-label-md text-label-md text-on-surface-variant mb-3 flex items-center">
+<span class="material-symbols-outlined text-primary mr-2 text-sm">science</span>
+                    Siber Saldırı Simülasyon Enjektörü
+                </h3>
+<div class="space-y-2 mb-4">
+<label class="flex items-center space-x-2 cursor-pointer group">
+<input checked="" class="form-radio text-primary focus:ring-primary h-4 w-4 bg-slate-100/50 border-slate-300" name="scenario" type="radio" value="standart"/>
+<span class="font-body-md text-body-md text-on-surface-variant group-hover:text-primary transition-colors">Standart</span>
+</label>
+<label class="flex items-center space-x-2 cursor-pointer group">
+<input class="form-radio text-primary focus:ring-primary h-4 w-4 bg-slate-100/50 border-slate-300" name="scenario" type="radio" value="bot"/>
+<span class="font-body-md text-body-md text-on-surface-variant group-hover:text-primary transition-colors">Bot</span>
+</label>
+<label class="flex items-center space-x-2 cursor-pointer group">
+<input class="form-radio text-primary focus:ring-primary h-4 w-4 bg-slate-100/50 border-slate-300" name="scenario" type="radio" value="drainer"/>
+<span class="font-body-md text-body-md text-on-surface-variant group-hover:text-primary transition-colors">Drainer</span>
+</label>
+</div>
+<button class="w-full bg-white text-primary border border-primary-container rounded-lg py-2 font-label-md text-label-md font-bold shadow-[0_0_10px_rgba(6,182,212,0.3)] hover:shadow-[0_0_15px_rgba(6,182,212,0.5)] transition-all active:scale-95" id="trigger-sim-btn">
+                    Siber Savunma Hattını Ateşle
+                </button>
+<p class="mt-3 text-[10px] text-outline font-mono-data uppercase tracking-widest text-center opacity-70">Jüri Notu: Manuel tetikleyici ile lokal /predict endpointine payload gönderilir. Arka planda Isolation Forest algoritması ile anomali tespiti yapılır.</p>
+</div>
+<div class="px-4 py-3 rounded-lg border border-primary/20 bg-primary/5 text-center">
+<span class="font-label-md text-label-md text-primary font-bold tracking-widest" id="network-status">NETWORK SECURE</span>
+</div>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="ml-64 mt-16 p-grid-margin min-h-[calc(100vh-4rem-64px)] pb-24">
+<!-- Top Panel: Telemetry Dials & Risk Gauge -->
+<section class="grid grid-cols-1 md:grid-cols-12 gap-gutter mb-gutter">
+<!-- Risk Gauge Card (Span 4) -->
+<div class="col-span-1 md:col-span-4 glass-panel border border-slate-200/50 rounded-xl p-6 shadow-[0_0_15px_rgba(6,182,212,0.12)] relative overflow-hidden group" id="risk-card">
+<div class="absolute top-0 left-0 w-full neon-divider" id="risk-neon"></div>
+<h2 class="font-headline-md text-headline-md text-on-surface mb-1">Yapay Zeka Risk Skoru</h2>
+<p class="font-mono-data text-mono-data text-outline mb-4 flex items-center">
+<span class="material-symbols-outlined text-sm mr-1">analytics</span> Gerçek Zamanlı Analiz
+                </p>
+<div class="relative w-48 h-48 mx-auto flex items-center justify-center">
+<canvas id="riskGauge"></canvas>
+<div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+<span class="font-display-lg text-display-lg text-primary font-bold" id="risk-value-display">12</span>
+<span class="font-label-md text-label-md text-outline">%</span>
+</div>
+</div>
+</div>
+<!-- Metrics Dials (Span 8) -->
+<div class="col-span-1 md:col-span-8 grid grid-cols-1 md:grid-cols-3 gap-gutter">
+<!-- Dial 1 -->
+<div class="glass-panel border border-slate-200/50 rounded-xl p-6 shadow-[0_0_15px_rgba(6,182,212,0.12)] flex flex-col justify-between">
+<div>
+<h3 class="font-label-md text-label-md text-on-surface-variant flex items-center">
+<span class="material-symbols-outlined text-primary mr-2">speed</span> İşlem Sıklığı
+                        </h3>
+<div class="neon-divider my-3 opacity-50"></div>
+</div>
+<div>
+<div class="flex items-end space-x-2">
+<span class="font-headline-lg text-headline-lg text-on-surface font-bold" id="metric-tx-freq">42</span>
+<span class="font-mono-data text-mono-data text-outline mb-1">tx/sec</span>
+</div>
+<div class="w-full bg-slate-200 h-1 mt-3 rounded-full overflow-hidden">
+<div class="bg-primary h-full rounded-full transition-all duration-500 w-[42%]" id="metric-tx-bar"></div>
+</div>
+</div>
+</div>
+<!-- Dial 2 -->
+<div class="glass-panel border border-slate-200/50 rounded-xl p-6 shadow-[0_0_15px_rgba(6,182,212,0.12)] flex flex-col justify-between" id="ip-metric-card">
+<div>
+<h3 class="font-label-md text-label-md text-on-surface-variant flex items-center">
+<span class="material-symbols-outlined text-primary mr-2" id="ip-icon">location_on</span> IP Lokasyon Sapması
+                        </h3>
+<div class="neon-divider my-3 opacity-50" id="ip-neon"></div>
+</div>
+<div>
+<div class="flex items-end space-x-2">
+<span class="font-headline-lg text-headline-lg text-on-surface font-bold" id="metric-ip-dev">0.05</span>
+<span class="font-mono-data text-mono-data text-outline mb-1">km/s</span>
+</div>
+<div class="w-full bg-slate-200 h-1 mt-3 rounded-full overflow-hidden">
+<div class="bg-primary h-full rounded-full transition-all duration-500 w-[5%]" id="metric-ip-bar"></div>
+</div>
+</div>
+</div>
+<!-- Dial 3 -->
+<div class="glass-panel border border-slate-200/50 rounded-xl p-6 shadow-[0_0_15px_rgba(6,182,212,0.12)] flex flex-col justify-between">
+<div>
+<h3 class="font-label-md text-label-md text-on-surface-variant flex items-center">
+<span class="material-symbols-outlined text-primary mr-2">local_gas_station</span> Gas Ücreti Volatilitesi
+                        </h3>
+<div class="neon-divider my-3 opacity-50"></div>
+</div>
+<div>
+<div class="flex items-end space-x-2">
+<span class="font-headline-lg text-headline-lg text-on-surface font-bold" id="metric-gas-vol">1.2</span>
+<span class="font-mono-data text-mono-data text-outline mb-1">gwei/Δ</span>
+</div>
+<div class="w-full bg-slate-200 h-1 mt-3 rounded-full overflow-hidden">
+<div class="bg-primary h-full rounded-full transition-all duration-500 w-[12%]" id="metric-gas-bar"></div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Middle Panel: ZK-STARK Logic -->
+<section class="glass-panel border border-slate-200/50 rounded-xl shadow-[0_0_15px_rgba(6,182,212,0.12)] mb-gutter overflow-hidden relative">
+<div class="absolute top-0 left-0 w-full neon-divider"></div>
+<div class="p-6 border-b border-slate-200/50 flex justify-between items-center bg-white/30">
+<div>
+<h2 class="font-headline-md text-headline-md text-on-surface">Kriptografik ZK-STARK Sıkıştırma</h2>
+<p class="font-mono-data text-mono-data text-outline mt-1">Dinamik Matris Rotasyonu Aktif</p>
+</div>
+<div class="text-right">
+<p class="font-label-md text-label-md text-on-surface-variant">Kanıtlayıcı Zamanı</p>
+<p class="font-mono-data text-mono-data font-bold text-primary" id="prover-timer">00:00:42.105ms</p>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-0">
+<!-- Matrix Visualizer -->
+<div class="p-6 border-r border-slate-200/50 relative bg-surface-container-low">
+<h3 class="font-label-md text-label-md text-on-surface-variant mb-4 flex items-center">
+<span class="material-symbols-outlined text-primary mr-2 text-sm">memory</span> Polinom Kısıtlamaları
+                    </h3>
+<!-- Decorative Node Grid -->
+<div class="grid grid-cols-6 gap-2 opacity-60">
+<!-- generating a simple grid to represent matrix -->
+<script>
+                            for(let i=0; i<24; i++) {
+                                document.write(`<div class="h-8 rounded bg-primary/10 border border-primary/20 flex items-center justify-center text-[8px] font-mono-data text-primary/50 transition-all hover:bg-primary/30">P${i}</div>`);
+                            }
+                        </script>
+</div>
+</div>
+<!-- Compression Funnel -->
+<div class="p-6 bg-surface-container-low flex flex-col justify-center">
+<h3 class="font-label-md text-label-md text-on-surface-variant mb-4 text-center">ZK-STARK Logaritmik Sıkıştırma Hunisi</h3>
+<div class="flex flex-col items-center space-y-2">
+<div class="w-full bg-slate-200 h-6 rounded flex overflow-hidden opacity-50">
+<div class="bg-rose-400 w-1/4"></div><div class="bg-emerald-400 w-3/4"></div>
+</div>
+<span class="material-symbols-outlined text-outline">arrow_downward</span>
+<div class="w-3/4 bg-slate-200 h-6 rounded flex overflow-hidden opacity-70">
+<div class="bg-rose-400 w-1/6"></div><div class="bg-emerald-400 w-5/6"></div>
+</div>
+<span class="material-symbols-outlined text-outline">arrow_downward</span>
+<div class="w-1/2 bg-slate-200 h-6 rounded flex overflow-hidden shadow-[0_0_10px_rgba(6,182,212,0.3)] border border-primary/30">
+<div class="bg-emerald-500 w-full flex items-center justify-center text-white text-[10px] font-bold">SIKIŞTIRILMIŞ KANIT</div>
+</div>
+</div>
+</div>
+</div>
+<div class="p-2 bg-slate-100/50 text-center border-t border-slate-200/50">
+<p class="text-[10px] text-outline font-mono-data uppercase tracking-widest">Jüri Notu: ZK-STARK mimarisi yüksek veriyi logaritmik olarak kanıtlara dönüştürerek on-chain yükünü azaltır.</p>
+</div>
+</section>
+<!-- Bottom Panel: On-Chain Monitor -->
+<section class="glass-panel border border-slate-200/50 rounded-xl shadow-[0_0_15px_rgba(6,182,212,0.12)] overflow-hidden relative" id="onchain-panel">
+<div class="absolute top-0 left-0 w-full neon-divider" id="onchain-neon"></div>
+<div class="p-6 border-b border-slate-200/50 flex justify-between items-center bg-white/30">
+<h2 class="font-headline-md text-headline-md text-on-surface flex items-center">
+<span class="material-symbols-outlined text-primary mr-2">database</span> On-Chain Solidity Durum İzleyicisi
+                </h2>
+<!-- Hidden countdown, revealed on panic -->
+<div class="hidden flex items-center space-x-3 bg-error-container border border-error px-4 py-2 rounded-lg shadow-[0_0_10px_rgba(244,63,94,0.3)]" id="timelock-container">
+<span class="material-symbols-outlined text-error animate-pulse">lock_clock</span>
+<div>
+<p class="font-label-md text-label-md text-on-error-container text-xs leading-none">On-Chain Zaman Kilidi (Pause)</p>
+<p class="font-mono-data text-mono-data font-bold text-error text-lg leading-none mt-1" id="timelock-countdown">00:04:59</p>
+</div>
+</div>
+</div>
+<div class="p-0 overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-surface-container text-on-surface-variant font-label-md text-label-md border-b border-slate-200/80">
+<th class="p-4 font-medium">Zaman Damgası</th>
+<th class="p-4 font-medium">Olay Tipi</th>
+<th class="p-4 font-medium">Tx Hash</th>
+<th class="p-4 font-medium">Durum</th>
+<th class="p-4 font-medium">Sıfır-Gas Paymaster</th>
+</tr>
+</thead>
+<tbody class="font-mono-data text-mono-data text-on-surface" id="log-table-body">
+<tr class="border-b border-slate-100 hover:bg-white/50 transition-colors">
+<td class="p-4 text-outline">10:42:15.001</td>
+<td class="p-4"><span class="px-2 py-1 bg-surface-container-high rounded text-xs">VerifyProof</span></td>
+<td class="p-4 text-primary truncate max-w-[150px]">0x7a...4f2c</td>
+<td class="p-4 text-secondary flex items-center"><span class="material-symbols-outlined text-sm mr-1">check_circle</span> SUCCESS</td>
+<td class="p-4">Relayed (0 Gas)</td>
+</tr>
+<tr class="border-b border-slate-100 hover:bg-white/50 transition-colors">
+<td class="p-4 text-outline">10:42:10.552</td>
+<td class="p-4"><span class="px-2 py-1 bg-surface-container-high rounded text-xs">StateCommit</span></td>
+<td class="p-4 text-primary truncate max-w-[150px]">0x1b...9a11</td>
+<td class="p-4 text-secondary flex items-center"><span class="material-symbols-outlined text-sm mr-1">check_circle</span> SUCCESS</td>
+<td class="p-4">Relayed (0 Gas)</td>
+</tr>
+<tr class="hover:bg-white/50 transition-colors">
+<td class="p-4 text-outline">10:42:05.100</td>
+<td class="p-4"><span class="px-2 py-1 bg-surface-container-high rounded text-xs">OracleUpdate</span></td>
+<td class="p-4 text-primary truncate max-w-[150px]">0xc9...33d0</td>
+<td class="p-4 text-secondary flex items-center"><span class="material-symbols-outlined text-sm mr-1">check_circle</span> SUCCESS</td>
+<td class="p-4">Relayed (0 Gas)</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="p-2 bg-slate-100/50 text-center border-t border-slate-200/50">
+<p class="text-[10px] text-outline font-mono-data uppercase tracking-widest">Jüri Notu: AA (Account Abstraction) Paymaster kullanılarak acil durum tx'leri sponsorsuz sıfır gas ile geçirilir. ERC-4337 Time-Lock mantığı ile on-chain kilitlenmesi sağlanır.</p>
+</div>
+</section>
+</main>
+<!-- Footer -->
+<footer class="fixed bottom-0 right-0 left-64 py-4 px-8 border-t border-slate-200/20 bg-white/30 backdrop-blur-sm flex justify-between items-center w-full z-30 transition-opacity hover:opacity-100 opacity-80">
+<p class="font-body-md text-body-md text-on-surface-variant/60 text-xs max-w-2xl">
+            Jüri Notu: Teknik HUD estetiği, gerçek zamanlı teşhis bütünlüğünü vurgulamak için matematiksel dikey ritim ve glassmorphism kullanır.
+        </p>
+<div class="flex space-x-6">
+<a class="font-label-md text-label-md text-on-surface-variant/60 hover:text-primary transition-colors" href="#">Tasarım Gerekçesi</a>
+<a class="font-label-md text-label-md text-on-surface-variant/60 hover:text-primary transition-colors" href="#">ZK-STARK Mantığı</a>
+<a class="font-label-md text-label-md text-on-surface-variant/60 hover:text-primary transition-colors" href="#">Sistem Protokolü</a>
+</div>
+</footer>
+<!-- Logic Script -->
+<script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Chart.js Setup for Risk Gauge
+            const ctx = document.getElementById('riskGauge').getContext('2d');
+            
+            // Create gradient for safe state
+            let gradientSafe = ctx.createLinearGradient(0, 0, 0, 400);
+            gradientSafe.addColorStop(0, '#4cd7f6');
+            gradientSafe.addColorStop(1, '#00687a');
+
+            // Create gradient for panic state
+            let gradientPanic = ctx.createLinearGradient(0, 0, 0, 400);
+            gradientPanic.addColorStop(0, '#ff7f8b');
+            gradientPanic.addColorStop(1, '#ba1a1a');
+
+            let riskChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    datasets: [{
+                        data: [12, 88], // Start safe [risk, remaining]
+                        backgroundColor: [gradientSafe, '#eff4ff'],
+                        borderWidth: 0,
+                        circumference: 270,
+                        rotation: 225,
+                        cutout: '85%'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { tooltip: { enabled: false }, legend: { display: false } },
+                    animation: { duration: 1000, easing: 'easeOutQuart' }
+                }
+            });
+
+            // UI Elements
+            const btnTrigger = document.getElementById('trigger-sim-btn');
+            const displayRisk = document.getElementById('risk-value-display');
+            const banner = document.getElementById('status-banner');
+            const bannerText = document.getElementById('status-text');
+            const bannerIcon = document.getElementById('status-icon');
+            
+            const mTxFreq = document.getElementById('metric-tx-freq');
+            const mTxBar = document.getElementById('metric-tx-bar');
+            const mIpDev = document.getElementById('metric-ip-dev');
+            const mIpBar = document.getElementById('metric-ip-bar');
+            const mGasVol = document.getElementById('metric-gas-vol');
+            const mGasBar = document.getElementById('metric-gas-bar');
+            
+            const logTableBody = document.getElementById('log-table-body');
+            const timelockContainer = document.getElementById('timelock-container');
+            const timelockCountdown = document.getElementById('timelock-countdown');
+            
+            // Neon elements
+            const riskNeon = document.getElementById('risk-neon');
+            const riskCard = document.getElementById('risk-card');
+            const topNav = document.getElementById('top-nav');
+            const onchainNeon = document.getElementById('onchain-neon');
+            const onchainPanel = document.getElementById('onchain-panel');
+            const ipIcon = document.getElementById('ip-icon');
+            const ipNeon = document.getElementById('ip-neon');
+            const ipCard = document.getElementById('ip-metric-card');
+
+            let isPanic = false;
+            let countdownInterval;
+
+            function updateUIState(riskScore, scenario) {
+                // Update Risk Display
+                displayRisk.innerText = Math.round(riskScore);
+                
+                // Update Metrics based on scenario loosely
+                let txScore, ipScore, gasScore;
+                
+                if(riskScore > 75) {
+                    txScore = Math.floor(Math.random() * 500) + 200; // High Tx
+                    ipScore = (Math.random() * 5 + 2).toFixed(2); // High Dev
+                    gasScore = (Math.random() * 50 + 20).toFixed(1); // High Volatility
+                } else {
+                    txScore = Math.floor(Math.random() * 30) + 20; 
+                    ipScore = (Math.random() * 0.1).toFixed(2);
+                    gasScore = (Math.random() * 2).toFixed(1);
+                }
+
+                mTxFreq.innerText = txScore;
+                mTxBar.style.width = `${Math.min(txScore/5, 100)}%`;
+                
+                mIpDev.innerText = ipScore;
+                mIpBar.style.width = `${Math.min(ipScore*10, 100)}%`;
+                
+                mGasVol.innerText = gasScore;
+                mGasBar.style.width = `${Math.min(gasScore*2, 100)}%`;
+
+                // Handle Panic vs Safe Mode
+                if (riskScore > 75 && !isPanic) {
+                    triggerPanicMode();
+                } else if (riskScore <= 75 && isPanic) {
+                    triggerSafeMode();
+                }
+
+                // Update Chart
+                riskChart.data.datasets[0].data = [riskScore, 100 - riskScore];
+                riskChart.data.datasets[0].backgroundColor[0] = riskScore > 75 ? gradientPanic : gradientSafe;
+                riskChart.update();
+                
+                // Add Log Entry
+                addLogEntry(scenario, riskScore > 75);
+            }
+
+            function triggerPanicMode() {
+                isPanic = true;
+                
+                // Banner
+                banner.classList.replace('bg-surface-container', 'bg-error-container');
+                banner.classList.replace('border-secondary/30', 'border-error/50');
+                banner.classList.replace('shadow-[0_0_10px_rgba(0,108,73,0.2)]', 'shadow-[0_0_20px_rgba(244,63,94,0.4)]');
+                
+                bannerText.classList.replace('text-secondary', 'text-error');
+                bannerText.innerText = "PANIC MODE ACTIVATED - PAUSING CONTRACTS";
+                
+                bannerIcon.classList.replace('text-secondary', 'text-error');
+                bannerIcon.innerText = "warning";
+                bannerIcon.classList.add('animate-pulse');
+
+                displayRisk.classList.replace('text-primary', 'text-error');
+
+                // Neons & Borders
+                riskNeon.classList.replace('neon-divider', 'neon-divider-panic');
+                riskCard.classList.add('panic-mode-active');
+                
+                onchainNeon.classList.replace('neon-divider', 'neon-divider-panic');
+                onchainPanel.classList.add('panic-mode-active');
+
+                ipIcon.classList.replace('text-primary', 'text-error');
+                ipNeon.classList.replace('neon-divider', 'neon-divider-panic');
+                ipCard.classList.add('panic-mode-active');
+                mIpBar.classList.replace('bg-primary', 'bg-error');
+
+                // TopNav Border glow
+                topNav.classList.replace('shadow-[0_0_15px_rgba(6,182,212,0.12)]', 'shadow-[0_0_20px_rgba(244,63,94,0.2)]');
+
+                // Reveal Timelock
+                timelockContainer.classList.remove('hidden');
+                startCountdown(5 * 60); // 5 minutes
+            }
+
+            function triggerSafeMode() {
+                isPanic = false;
+                
+                banner.classList.replace('bg-error-container', 'bg-surface-container');
+                banner.classList.replace('border-error/50', 'border-secondary/30');
+                banner.classList.replace('shadow-[0_0_20px_rgba(244,63,94,0.4)]', 'shadow-[0_0_10px_rgba(0,108,73,0.2)]');
+                
+                bannerText.classList.replace('text-error', 'text-secondary');
+                bannerText.innerText = "SİSTEM GÜVENLİ - LIGHT ARMOR ACTIVE (ML-DSA-44)";
+                
+                bannerIcon.classList.replace('text-error', 'text-secondary');
+                bannerIcon.innerText = "shield";
+                bannerIcon.classList.remove('animate-pulse');
+
+                displayRisk.classList.replace('text-error', 'text-primary');
+
+                riskNeon.classList.replace('neon-divider-panic', 'neon-divider');
+                riskCard.classList.remove('panic-mode-active');
+                
+                onchainNeon.classList.replace('neon-divider-panic', 'neon-divider');
+                onchainPanel.classList.remove('panic-mode-active');
+
+                ipIcon.classList.replace('text-error', 'text-primary');
+                ipNeon.classList.replace('neon-divider-panic', 'neon-divider');
+                ipCard.classList.remove('panic-mode-active');
+                mIpBar.classList.replace('bg-error', 'bg-primary');
+
+                topNav.classList.replace('shadow-[0_0_20px_rgba(244,63,94,0.2)]', 'shadow-[0_0_15px_rgba(6,182,212,0.12)]');
+
+                timelockContainer.classList.add('hidden');
+                clearInterval(countdownInterval);
+            }
+
+            function startCountdown(duration) {
+                let timer = duration, minutes, seconds;
+                clearInterval(countdownInterval);
+                countdownInterval = setInterval(function () {
+                    minutes = parseInt(timer / 60, 10);
+                    seconds = parseInt(timer % 60, 10);
+
+                    minutes = minutes < 10 ? "0" + minutes : minutes;
+                    seconds = seconds < 10 ? "0" + seconds : seconds;
+
+                    timelockCountdown.textContent = "00:" + minutes + ":" + seconds;
+
+                    if (--timer < 0) {
+                        timer = duration; // loop for demo
+                    }
+                }, 1000);
+            }
+
+            function addLogEntry(scenario, isCritical) {
+                const now = new Date();
+                const timeStr = `${now.getHours()}:${now.getMinutes()}:${now.getSeconds()}.${now.getMilliseconds()}`;
+                
+                let eventType, hash, status, gasInfo;
+                
+                if(isCritical) {
+                    eventType = `<span class="px-2 py-1 bg-error/10 text-error border border-error/30 rounded text-xs font-bold">PAUSE_CONTRACT</span>`;
+                    hash = `0x${Math.random().toString(16).substr(2, 4)}...${Math.random().toString(16).substr(2, 4)}`;
+                    status = `<span class="text-error flex items-center"><span class="material-symbols-outlined text-sm mr-1">warning</span> CRITICAL</span>`;
+                    gasInfo = `<span class="text-error">PAYMASTER OVERRIDE</span>`;
+                } else {
+                    eventType = `<span class="px-2 py-1 bg-surface-container-high rounded text-xs">Sim_${scenario.substring(0,3).toUpperCase()}</span>`;
+                    hash = `0x${Math.random().toString(16).substr(2, 4)}...${Math.random().toString(16).substr(2, 4)}`;
+                    status = `<span class="text-secondary flex items-center"><span class="material-symbols-outlined text-sm mr-1">check_circle</span> SUCCESS</span>`;
+                    gasInfo = `Relayed (0 Gas)`;
+                }
+
+                const newRow = document.createElement('tr');
+                newRow.className = `border-b border-slate-100 transition-colors ${isCritical ? 'bg-error-container/20' : 'hover:bg-white/50'}`;
+                newRow.innerHTML = `
+                    <td class="p-4 text-outline">${timeStr}</td>
+                    <td class="p-4">${eventType}</td>
+                    <td class="p-4 ${isCritical ? 'text-error font-bold' : 'text-primary'} truncate max-w-[150px]">${hash}</td>
+                    <td class="p-4">${status}</td>
+                    <td class="p-4">${gasInfo}</td>
+                `;
+                
+                // Add to top
+                logTableBody.insertBefore(newRow, logTableBody.firstChild);
+                
+                // Keep only 5 rows for demo
+                if(logTableBody.children.length > 5) {
+                    logTableBody.removeChild(logTableBody.lastChild);
+                }
+            }
+
+            // Button Event Listener
+            btnTrigger.addEventListener('click', () => {
+                const selectedScenario = document.querySelector('input[name="scenario"]:checked').value;
+                
+                // Visual feedback on button
+                btnTrigger.innerText = "Injecting Payload...";
+                btnTrigger.classList.add('opacity-70');
+                btnTrigger.disabled = true;
+
+                // Simulate fetch to ML endpoint
+                /* 
+                fetch('http://127.0.0.1:8000/predict', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ scenario: selectedScenario })
+                }).then(res => res.json()).then(data => {...}) 
+                */
+
+                // Simulated logic based on selection
+                setTimeout(() => {
+                    let mockRisk = 12; // default
+                    if (selectedScenario === 'bot') {
+                        mockRisk = Math.floor(Math.random() * 20) + 60; // 60-80
+                    } else if (selectedScenario === 'drainer') {
+                        mockRisk = Math.floor(Math.random() * 15) + 85; // 85-100 (Triggers Panic)
+                    } else {
+                        mockRisk = Math.floor(Math.random() * 15) + 5; // 5-20 (Safe)
+                    }
+
+                    updateUIState(mockRisk, selectedScenario);
+
+                    // Reset button
+                    btnTrigger.innerText = "Siber Savunma Hattını Ateşle";
+                    btnTrigger.classList.remove('opacity-70');
+                    btnTrigger.disabled = false;
+                }, 800); // simulated network delay
+            });
+
+            // Prover Timer continuous update
+            setInterval(() => {
+                const proverEl = document.getElementById('prover-timer');
+                let ms = Math.floor(Math.random() * 999);
+                proverEl.innerText = `00:00:42.${ms.toString().padStart(3, '0')}ms`;
+            }, 100);
+        });
+    </script>
+</body></html>
