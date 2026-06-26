@@ -1,0 +1,143 @@
+name: Q-ADAPTIVE CI
+
+on:
+  push:
+    branches: ["main", "develop"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  PYTHON_VERSION: "3.11"
+  RUST_TOOLCHAIN: "stable"
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 1 — Python ONNX Inference Engine & FastAPI Layer
+  # ─────────────────────────────────────────────────────────────────────────────
+  python-ai-tests:
+    name: "Python · ONNX Inference & API Tests"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Q-Adaptive-AI
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run ONNX inference unit tests (target: 12/12 pass)
+        run: python -m pytest test_onnx_inference.py -v --tb=short
+
+      - name: Run API integration tests
+        run: python -m pytest test_api_client.py -v --tb=short
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-test-results
+          path: Q-Adaptive-AI/**/*.log
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 2 — Rust Winterfell ZK-STARK Prover Core
+  # ─────────────────────────────────────────────────────────────────────────────
+  rust-zk-check:
+    name: "Rust · Winterfell STARK Prover Check & Clippy"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Q-Adaptive-ZK
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (${{ env.RUST_TOOLCHAIN }})
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "Q-Adaptive-ZK -> target"
+
+      - name: Cargo check (fast compile validation)
+        run: cargo check --all-targets
+
+      - name: Clippy lint (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Cargo fmt check
+        run: cargo fmt --check
+
+      - name: Cargo test (release profile for prover benchmarks)
+        run: cargo test --release -- --nocapture
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 3 — EVM Solidity ERC-4337 Smart Contracts
+  # ─────────────────────────────────────────────────────────────────────────────
+  solidity-lint:
+    name: "Solidity · ERC-4337 Contract Lint & Slither Analysis"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Q-Adaptive-Contracts
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js (for solhint)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install solhint
+        run: npm install -g solhint
+
+      - name: Run solhint on contracts
+        run: solhint 'contracts/**/*.sol'
+
+      - name: Set up Python (for Slither)
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Slither
+        run: pip install slither-analyzer
+
+      - name: Slither static analysis
+        run: slither contracts/ --print human-summary
+        continue-on-error: true   # advisory; does not fail the build
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 4 — Repository hygiene & documentation gate
+  # ─────────────────────────────────────────────────────────────────────────────
+  hygiene:
+    name: "Repo · Hygiene Check"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify README exists and is non-empty
+        run: test -s README.md && echo "README.md ✓"
+
+      - name: Check for accidental secrets (trufflehog)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+        continue-on-error: true
