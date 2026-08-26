@@ -32,12 +32,23 @@ from config import MODEL_DIR, MODEL_ARTIFACT_NAME
 logger = setup_logger("Q-ADAPTIVE.Server")
 
 # ── Sunucu Yapılandırması ─────────────────────────────────────────────────────
+#
+# Ortam değişkeni ile geçersiz kılınabilir (konteyner / PaaS uyumluluğu):
+#   QA_HOST      → Bağlanılacak arayüz. Konteynerde 0.0.0.0 olmalıdır;
+#                  aksi halde port dışarıya açılmaz.
+#   PORT         → Platformlar (Hugging Face Spaces, Fly.io, Render, Cloud Run)
+#                  dinlenecek portu bu değişkenle bildirir.
+#   QA_LOG_LEVEL → uvicorn log seviyesi.
+#
+# Varsayılanlar yerel geliştirme içindir: 127.0.0.1:8000
 
-SERVER_HOST   : str  = "127.0.0.1"
-SERVER_PORT   : int  = 8000
+SERVER_HOST   : str  = os.getenv("QA_HOST", "127.0.0.1")
+SERVER_PORT   : int  = int(os.getenv("PORT", "8000"))
 RELOAD_MODE   : bool = False     # Development'ta True yapılabilir
-LOG_LEVEL     : str  = "info"
-WORKERS       : int  = 1         # Tek worker (tek model örneği için)
+LOG_LEVEL     : str  = os.getenv("QA_LOG_LEVEL", "info")
+WORKERS       : int  = 1         # Tek worker — SlidingWindowThresholdCalibrator
+                                 # süreç belleğinde durum tutar; birden fazla
+                                 # worker τ(t) penceresini bölerdi.
 
 
 def _check_model_artifact() -> None:

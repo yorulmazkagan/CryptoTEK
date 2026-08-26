@@ -1,0 +1,38 @@
+# =============================================================================
+# Docker derleme bağlamı dışlamaları
+# =============================================================================
+# Amaç: imaj boyutunu ve derleme bağlamı transferini minimumda tutmak.
+# Not: Q-Adaptive-AI/models/ ve Q-Adaptive-ZK/proof_payload.json BİLEREK
+#      dışlanmamıştır — bunlar çalışma zamanı artefaktlarıdır.
+
+# ── Derleme çıktıları ────────────────────────────────────────────────────────
+Q-Adaptive-ZK/target/
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+
+# ── Sanal ortamlar ───────────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+.env
+
+# ── Versiyon kontrolü & CI ───────────────────────────────────────────────────
+.git/
+.gitignore
+.github/
+
+# ── Ağır dokümantasyon varlıkları (imaja gerek yok) ─────────────────────────
+docs/assets/
+*.pptx
+*.potx
+*.pdf
+images/
+
+# ── Loglar & OS artıkları ────────────────────────────────────────────────────
+**/*.log
+.DS_Store
+Thumbs.db
+
+# ── Deploy dokümanları ───────────────────────────────────────────────────────
+DEPLOY.md
