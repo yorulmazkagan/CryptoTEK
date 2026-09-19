@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "./interfaces/IUserOperation.sol";
-import "./interfaces/IAICore.sol";
+import {UserOperation} from "./interfaces/IUserOperation.sol";
+import {IAICore} from "./interfaces/IAICore.sol";
 
 /**
  * @title  QAdaptiveAccount
@@ -660,9 +660,22 @@ contract QAdaptiveAccount {
         uint256 riskScore,
         uint256 validUntil
     ) public view returns (bytes32) {
+        // DIKKAT: Asagidaki tip dizesi Python tarafindaki
+        // `attestation.py::_ATTESTATION_TYPEHASH_SOURCE` ile BIREBIR ayni
+        // olmak zorunda. Tek bir karakter degisirse digest degisir ve
+        // guardian imzalari zincirde reddedilir.
+        //
+        // Satir 120 karakteri astigi icin bolundu. Solidity'de yan yana
+        // yazilan dize sabitleri derleme aninda BIRLESTIRILIR ("ab" "cd"
+        // == "abcd"), yani dizenin icerigi degismedi.
+        // GuardianAttestation.t.sol::test_python_digesti_sozlesme_digestiyle_ayni
+        // bu esitligi her kosuda dogruluyor.
         bytes32 structHash = keccak256(
             abi.encode(
-                keccak256("QAdaptiveRiskAttestation(bytes32 userOpHash,uint256 riskScore,uint256 validUntil,address account,uint256 chainId)"),
+                keccak256(
+                    "QAdaptiveRiskAttestation(bytes32 userOpHash,uint256 riskScore,"
+                    "uint256 validUntil,address account,uint256 chainId)"
+                ),
                 userOpHash,
                 riskScore,
                 validUntil,

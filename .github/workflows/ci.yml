@@ -310,17 +310,31 @@ jobs:
       - name: Install Slither
         run: pip install slither-analyzer
 
-      # Slither ilk kez GERCEKTEN calisacak. Bulgular henuz triyaj edilmedigi
-      # icin adim simdilik tavsiye niteliginde birakildi — ama artik gercek
-      # cikti uretiyor ve o cikti OKUNMALI.
+      # ZAFIYET TARAMASI — asil is bu adim.
       #
-      # Siradaki adim: bulgulari triyaj edip gerekcesiz olanlari duzeltmek,
-      # gerekcelileri `slither.config.json` ile dislamak, ardindan
-      # `continue-on-error` satirini KALDIRMAK. O noktaya kadar bu is
-      # "Slither'dan geciyoruz" demek icin dayanak DEGILDIR.
-      - name: Slither static analysis
-        run: slither . --print human-summary
+      # Onceki komut `slither . --print human-summary` idi. `--print` bayragi
+      # Slither'a bir PRINTER calistirmasini soyler ve printer modunda zafiyet
+      # DEDEKTORLERI kosmaz; yalnizca bir ozet tablosu basilir. Yani o komut
+      # "statik analiz" gibi gorunup aslinda hicbir zafiyet aramiyordu.
+      #
+      # Bu belirsizligi tahminle kapatmak yerine komut ikiye ayrildi:
+      # asagidaki adim dedektorleri calistirir, sonraki adim ozet basar.
+      # Boylece dedektorlerin kostugu komutun kendisinden okunabiliyor.
+      #
+      # `continue-on-error` SIMDILIK duruyor cunku bulgular henuz triyaj
+      # edilmedi. Siradaki adim: ciktiyi okumak, gercek bulgulari duzeltmek,
+      # gerekceli olanlari slither.config.json ile dislamak ve ardindan bu
+      # satiri KALDIRMAK. O noktaya kadar bu is "Slither'dan geciyoruz" demek
+      # icin bir dayanak DEGILDIR.
+      - name: Slither vulnerability detectors
+        run: slither .
         continue-on-error: true   # bulgular triyaj edilene kadar tavsiye niteliginde
+
+      # Bilgilendirme: sozlesme sayisi, satir sayisi, karmasiklik ozeti.
+      # Zafiyet aramaz; yukaridaki adimin isini yapmaz.
+      - name: Slither human-readable summary
+        run: slither . --print human-summary
+        continue-on-error: true
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Job 4 — Repository hygiene & documentation gate

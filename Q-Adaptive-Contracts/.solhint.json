@@ -10,6 +10,7 @@
     "max-states-count": "off",
     "ordering": "off",
     "var-name-mixedcase": "off",
+    "immutable-vars-naming": "off",
     "reason-string": ["warn", { "maxLength": 80 }],
     "max-line-length": ["warn", 120],
     "func-visibility": ["error", { "ignoreConstructors": true }],

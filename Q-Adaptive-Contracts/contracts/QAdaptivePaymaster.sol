@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "./interfaces/IUserOperation.sol";
-import "./interfaces/IEntryPoint.sol";
+import {UserOperation} from "./interfaces/IUserOperation.sol";
+import {IEntryPoint} from "./interfaces/IEntryPoint.sol";
 
 /**
  * @title QAdaptivePaymaster
