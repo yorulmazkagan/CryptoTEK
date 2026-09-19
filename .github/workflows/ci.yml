@@ -322,8 +322,14 @@ jobs:
       # ancak saglayiciya karsi DOGRULANMIS canli bir kimlik bilgisi olursa
       # cikar, yani yanlis pozitif riski cok dusuk. Boyle bir bulgu CI'i
       # kirmali.
+      #
+      # `extra_args` icinde `--fail` VERILMEZ: action bu bayragi kendisi
+      # ekliyor ve tekrarlanirsa trufflehog su hatayla duser:
+      #   "trufflehog: error: flag 'fail' cannot be repeated"
+      # Bulgu durumunda isin kirmizi olmasi yine de saglaniyor - bayragi
+      # action geciyor, biz degil.
       - name: Check for accidental secrets (trufflehog)
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
-          extra_args: --only-verified --fail
+          extra_args: --only-verified
