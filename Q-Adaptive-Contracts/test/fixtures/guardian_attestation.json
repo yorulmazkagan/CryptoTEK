@@ -1,0 +1,41 @@
+{
+  "_comment": "Python (Q-Adaptive-AI/src/attestation.py) tarafindan uretildi. Yeniden uretmek icin: python3 scripts/generate_guardian_fixture.py",
+  "guardianAddress": "0x96559c9278c055ab45b84bbc4ef9479d835e0453",
+  "accountAddress": "0x00000000000000000000000000000000000acc01",
+  "chainId": 31337,
+  "userOpHash": "0xabababababababababababababababababababababababababababababababab",
+  "cases": [
+    {
+      "name": "dusuk_risk",
+      "description": "E\u015fi\u011fin alt\u0131nda \u2014 i\u015flem ge\u00e7meli",
+      "riskScore": 1000,
+      "validUntil": 4102444800,
+      "digest": "0x176704ef16f431709ae83592b69f36e5eb12902efc7751bfd40061cd08088d1d",
+      "signature": "0xecbeacb0fb5e3d938babbb43db996e927b59f637d5c51f2f601031f6ca9835c4536a5907a9854c5f2e61ee9b853c465d4906622f084627bc6e06f3c720dfbb151c"
+    },
+    {
+      "name": "esik_altinda",
+      "description": "E\u015fi\u011fin bir alt\u0131nda \u2014 ge\u00e7meli",
+      "riskScore": 7499,
+      "validUntil": 4102444800,
+      "digest": "0xf79ddfa3a6a4f2f10cf9fc40d968ac22e09367681e4a4416d02dfa545ac067f6",
+      "signature": "0xdeda4b493a0691dd3890357f7085851913dd267eb2145270fef7349e8c6eeb655d45dbdca8ceda7636cb8b5b29a26f8ee3239544855485f423cb9da618bb49351c"
+    },
+    {
+      "name": "esik_ustunde",
+      "description": "E\u015fi\u011fin bir \u00fcst\u00fcnde \u2014 reddedilmeli",
+      "riskScore": 7501,
+      "validUntil": 4102444800,
+      "digest": "0x279b024a36b7be0e8ce978d263db64169701fa7b187aaa8ab999f91b997847a4",
+      "signature": "0x6cdaa4d5e469efac9ac955ddecc314e5374070c9f6accfe7cfed7eeb6313c25c4c3657823b6f5867c442e3b36a79c299da2499af0e5ba342fc0b8e558f457cbb1c"
+    },
+    {
+      "name": "yuksek_risk",
+      "description": "Y\u00fcksek risk \u2014 reddedilmeli",
+      "riskScore": 9500,
+      "validUntil": 4102444800,
+      "digest": "0x440b123473d05f44b7e5e519bd71a2964c5c7b809cfd6f8d7ddb46a0d3bcdc15",
+      "signature": "0x3732e80abc70539a32bcc76cf0c52eb5fd472cb7d3901fb4410bc0966e09b2de224287be8ff623bbc7e2d1feefff8caad7552738b2e47d8353b3ff70d771c9a11b"
+    }
+  ]
+}

@@ -1,6 +1,15 @@
 # Rust build artifacts
 Q-Adaptive-ZK/target/
 
+# Foundry build artifacts
+# `out/` derlenmiş ABI/baytkod (~3 MB, 48 dosya), `cache/` derleme önbelleği.
+# İkisi de `forge build` ile yeniden üretilir; depoda durmalarının bir faydası
+# yok, her derlemede gürültülü diff üretirler.
+Q-Adaptive-Contracts/out/
+Q-Adaptive-Contracts/cache/
+Q-Adaptive-Contracts/broadcast/
+Q-Adaptive-Contracts/foundry.lock
+
 # Python cache and temporary files
 **/__pycache__/
 **/*.pyc

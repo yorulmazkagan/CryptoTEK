@@ -34,11 +34,56 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run ONNX inference unit tests (target: 12/12 pass)
-        run: python -m pytest test_onnx_inference.py -v --tb=short
+      # ──────────────────────────────────────────────────────────────────────
+      # HATA E20 ve onun gizlediği ikinci hata
+      # ──────────────────────────────────────────────────────────────────────
+      # E20: Bu adımın adındaki alıntılanmamış iki nokta — "(target: 12/12 pass)"
+      # — YAML'i geçersiz kılıyordu. GitHub dosyayı hiç ayrıştıramıyordu.
+      #
+      # YAML düzeltilince İKİNCİ bir hata ortaya çıktı: `test_onnx_inference.py`
+      # bir pytest paketi DEĞİL. İçinde `test_` ile başlayan hiçbir fonksiyon
+      # yok; tek bir `run_onnx_inference_test()` fonksiyonu var ve `__main__`
+      # altından çağrılıyor. `pytest` bu dosyadan hiç test toplayamaz ve
+      # **çıkış kodu 5 ile düşer**.
+      #
+      # Yani "CI'da 12/12 test geçiyor" ifadesinin iki ayrı sorunu vardı:
+      #   • CI hiç koşmuyordu (geçersiz YAML),
+      #   • koşsaydı bu adım düşecekti (pytest hiç test bulamaz).
+      # Ayrıca betik 12 test değil ÜÇ senaryo koşuyor.
+      #
+      # Doğru çağrı: betiği doğrudan çalıştırmak. Başarısızlıkta sıfır olmayan
+      # çıkış kodu döndürüyor, yani CI'ı gerçekten kapılıyor.
+      - name: "Run ONNX inference parity check (3 senaryo)"
+        run: python test_onnx_inference.py
 
-      - name: Run API integration tests
-        run: python -m pytest test_api_client.py -v --tb=short
+      # Saf Python Keccak-256 / secp256k1 uygulamasının bilinen vektörlerle
+      # sınanması. Asıl doğrulama zincirde (GuardianAttestation.t.sol) yapılır;
+      # bu, hızlı geri bildirim katmanı.
+      - name: "Guardian attestation kripto birim testleri (18 test)"
+        run: python test_attestation.py
+
+      # `test_api_client.py` de bir betik, pytest paketi değil — ve ÇALIŞAN BİR
+      # SUNUCU gerektiriyor. Sunucu ayağa kaldırılmadan çağrılırsa bağlantı
+      # hatası verir. Bu yüzden sunucu arka planda başlatılıp hazır olması
+      # bekleniyor.
+      - name: "Run API integration tests (sunucu ile)"
+        run: |
+          python run_server.py &
+          SERVER_PID=$!
+          # Sunucunun hazır olmasını bekle (en fazla 30 sn).
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8000/api/health >/dev/null 2>&1; then
+              echo "Sunucu hazır ($i sn)"
+              break
+            fi
+            sleep 1
+          done
+          set +e
+          python test_api_client.py
+          SONUC=$?
+          set -e
+          kill $SERVER_PID 2>/dev/null || true
+          exit $SONUC
 
       - name: Upload test results
         if: always()
@@ -86,6 +131,125 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────────
   # Job 3 — EVM Solidity ERC-4337 Smart Contracts
   # ─────────────────────────────────────────────────────────────────────────────
+  # ───────────────────────────────────────────────────────────────────────────
+  # Solidity testleri — BULGU 8
+  # ───────────────────────────────────────────────────────────────────────────
+  # Bu iş daha önce YOKTU çünkü depoda tek bir `.t.sol` dosyası yoktu.
+  # Gerçek ve sömürülebilir fon kaybı açığı (bulgu 5) tam da bu katmandaydı.
+  solidity-tests:
+    name: "Solidity · Foundry Tests (BULGU 5, 6, 14 + E1, E3, E4, E7)"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Q-Adaptive-Contracts
+
+    steps:
+      # forge-std depoda bir git submodule olarak sabitlenmiştir; `recursive`
+      # ile çekilir. Böylece CI her koşuda internetten taze bir sürüm çekmek
+      # yerine, testlerin gerçekten geçtiği commit'i kullanır.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Build contracts
+        run: forge build
+
+      # Guardian fixture'ını Python ile YENİDEN ÜRET.
+      # Depodaki fixture bayatsa bu adım onu tazeler; ardından gelen
+      # GuardianAttestation testleri Python'un güncel imzasını gerçek
+      # sözleşmeye verir. Python ↔ Solidity digest hizalaması bozulursa
+      # test kırılır.
+      - name: Regenerate guardian attestation fixture
+        working-directory: .
+        run: python3 scripts/generate_guardian_fixture.py
+
+      - name: "Fixture depodakiyle aynı mı (bayat fixture kontrolü)"
+        working-directory: .
+        run: |
+          if ! git diff --quiet -- Q-Adaptive-Contracts/test/fixtures/; then
+            echo "::error::Depodaki guardian fixture bayat. Çalıştırın: python3 scripts/generate_guardian_fixture.py"
+            git diff -- Q-Adaptive-Contracts/test/fixtures/
+            exit 1
+          fi
+          echo "OK: fixture güncel"
+
+      - name: Run Foundry tests (fuzz dahil)
+        run: forge test -vv
+
+      - name: Measure coverage
+        run: forge coverage --report summary
+
+      - name: Gas snapshot
+        run: forge test --gas-report
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Regresyon korumaları — düzeltilen hataların sessizce geri gelmesini engeller
+  # ───────────────────────────────────────────────────────────────────────────
+  regression-guards:
+    name: "Regresyon Koruması · Kapatılan bulgular geri gelmesin"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # BULGU 7: kriptografik olmayan hash kripto yoluna dönerse yapı kırılsın.
+      - name: "BULGU 7 — DefaultHasher kripto yolunda olmamalı"
+        run: |
+          if grep -rn --include=*.rs "DefaultHasher" Q-Adaptive-ZK/src/ \
+               | grep -vE "^\S+:[0-9]+:\s*(//|///)"; then
+            echo "::error::DefaultHasher (SipHash) kripto yoluna geri döndü — bulgu 7"
+            exit 1
+          fi
+          echo "OK: kod satırlarında DefaultHasher yok"
+
+      # BULGU 3: sabit 90.0 eşiği geri dönerse yapı kırılsın.
+      - name: "BULGU 3 — sabit 90.0 eşiği olmamalı"
+        run: |
+          if grep -rnE --include=*.rs --include=*.py "(>|>=)\s*90\.0" \
+               Q-Adaptive-ZK/src/ Q-Adaptive-AI/src/ \
+               | grep -vE "^\S+:[0-9]+:\s*(//|///|#)"; then
+            echo "::error::Sabit 90.0 eşiği geri döndü — bulgu 3"
+            exit 1
+          fi
+          echo "OK: sabit eşik yok"
+
+      # BULGU 13: uydurma 4608 calldata tabanı geri dönerse yapı kırılsın.
+      - name: "BULGU 13 — raw_sig_bytes = 4608 tabanı olmamalı"
+        run: |
+          if grep -rn --include=*.py "raw_sig_bytes" Q-Adaptive-AI/src/ \
+               | grep -vE "^\S+:[0-9]+:\s*#"; then
+            echo "::error::Uydurma 4608 calldata tabanı geri döndü — bulgu 13"
+            exit 1
+          fi
+          echo "OK: uydurma taban yok"
+
+      # BULGU 11: process::id() determinizmi bozarsa yapı kırılsın.
+      # NOT: `-H` şart. grep tek bir dosyada dosya adını basmaz ve o zaman
+      # aşağıdaki yorum filtresi tutmaz — koruma sahte hata verir.
+      - name: "BULGU 11 — process::id() ρ' türetimine karışmamalı"
+        run: |
+          if grep -rnH --include=*.rs "process::id" Q-Adaptive-ZK/src/hashing.rs \
+               | grep -vE "^[^:]+:[0-9]+:\s*(//|///)"; then
+            echo "::error::process::id() ρ' türetimine geri döndü — bulgu 11"
+            exit 1
+          fi
+          echo "OK: ρ' türetimi deterministik"
+
+      # HATA E1: 2300 gaz stipend'i geri dönerse yapı kırılsın.
+      - name: "HATA E1 — ön-fonlamada gas: 2300 stipend'i olmamalı"
+        run: |
+          if grep -rn --include=*.sol "call{gas: 2300" Q-Adaptive-Contracts/contracts/ \
+               | grep -vE "^\S+:[0-9]+:\s*(\*|//)"; then
+            echo "::error::gas: 2300 stipend'i geri döndü — hata E1"
+            exit 1
+          fi
+          echo "OK: stipend yok"
+
   solidity-lint:
     name: "Solidity · ERC-4337 Contract Lint & Slither Analysis"
     runs-on: ubuntu-latest
