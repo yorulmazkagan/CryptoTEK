@@ -13,11 +13,11 @@
 <br/>
 <br/>
 
-<img src="https://img.shields.io/badge/Tests-12%2F12%20Passing-brightgreen?style=for-the-badge&logo=pytest&logoColor=white" alt="12/12 Tests Passing"/>
+<img src="https://img.shields.io/badge/Tests-187%20Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white" alt="187 tests passing"/>
 <img src="https://img.shields.io/badge/ONNX%20Latency-1.12ms-00B4D8?style=for-the-badge" alt="ONNX 1.12ms"/>
-<img src="https://img.shields.io/badge/STARK%20Proof%20Size-3.85%20KB-blueviolet?style=for-the-badge" alt="STARK 3.85KB"/>
-<img src="https://img.shields.io/badge/Prover%20Time-18.52ms-blue?style=for-the-badge" alt="18.52ms Prover"/>
-<img src="https://img.shields.io/badge/L2%20Calldata-97.98%25%20Compression-success?style=for-the-badge" alt="L2 97.98% Compression"/>
+<img src="https://img.shields.io/badge/STARK%20Proof%20Size-measured%20per%20run-blueviolet?style=for-the-badge" alt="STARK proof size measured per run"/>
+<img src="https://img.shields.io/badge/Prover%20Time-measured%20per%20run-blue?style=for-the-badge" alt="Prover time measured per run"/>
+<img src="https://img.shields.io/badge/L2%20Calldata-~98%25%20vs%20ML--DSA%20batch-success?style=for-the-badge" alt="~98% calldata saving vs ML-DSA batch"/>
 <img src="https://img.shields.io/badge/License-Apache%202.0-lightgrey?style=for-the-badge" alt="Apache 2.0"/>
 
 </div>
@@ -100,7 +100,7 @@ Q-ADAPTIVE counters HNDL at every layer through three coordinated mechanisms:
   │                     │      │                      │      │                     │
   │  Live Telemetry     │      │  Q-Adaptive-AI       │      │  QAdaptiveAccount   │
   │  Feature Vector     │─────▶│  FastAPI + ONNX      │─────▶│  .sol (ERC-4337)    │
-  │  (16 dimensions)    │      │  Isolation Forest    │      │                     │
+  │   (3 dimensions)    │      │  Isolation Forest    │      │                     │
   │                     │      │  Calibrated Score    │      │  QAdaptivePaymaster │
   │                     │      │       │              │      │  .sol (zero gas)    │
   │                     │      │       ▼              │      │                     │
@@ -112,7 +112,7 @@ Q-ADAPTIVE counters HNDL at every layer through three coordinated mechanisms:
        [Stage 1]                [Stage 2]  [Stage 3]               [Stage 4]
     Telemetry Parsing       API Rate-Limit  ZK Proof Gen        CEI Validation &
    Sliding Window +          asyncio.Queue   Winterfell          Paymaster Sponsor
-   Dynamic Threshold         maxsize=50      3.85 KB / 18.52ms   Zero-gas UX
+   Dynamic Threshold        resource-derived  measured per run    Zero-gas UX
 ```
 
 ---
@@ -127,7 +127,7 @@ The Q-ADAPTIVE pipeline is a strict, deterministic 4-stage handshake. Each stage
 
 **Source module:** [`Q-Adaptive-AI/src/model.py`](./Q-Adaptive-AI/src/model.py)
 
-The client runtime continuously samples 16 behavioral features at 500ms intervals: gas price bid delta, calldata entropy, contract invocation depth, MEV sandwich exposure index, mempool dwell time, nonce reuse distance, and nine additional lattice-derived transaction topology metrics.
+The client runtime continuously samples **three** behavioral features at 500ms intervals: `Islem_Sikligi` (transaction frequency), `IP_Sapmasi` (IP deviation), and `Gas_Sapmasi` (gas deviation). These are the exact three features `Q-Adaptive-AI/src/model.py` trains on and exports to ONNX with input shape `[N, 3]`. Earlier revisions of this document described a 16-feature vector; that number never existed in the code.
 
 These samples are ingested by the **Sliding Window Dynamic Threshold Calibrator (SWDTC)** inside `model.py`, which maintains a ring buffer of the last *N* observations and recomputes upper/lower control bounds using an Exponentially Weighted Moving Average (EWMA) with decay factor α = 0.15.
 
@@ -146,7 +146,7 @@ class SlidingWindowCalibrator:
         return score / (baseline + 1e-9)   # normalized anomaly ratio
 ```
 
-The 16-dimensional feature vector is then fed into the **exported ONNX Isolation Forest** (`Q-Adaptive-AI/models/q_adaptive_guardian.onnx`) for real-time inference. The raw isolation forest score is recalibrated using metadata stored in `calibration_metadata.json` (Platt scaling coefficients), yielding a final **Normalized Anomaly Score (NAS)** ∈ [0, 1].
+The 3-dimensional feature vector is then fed into the **exported ONNX Isolation Forest** (`Q-Adaptive-AI/models/q_adaptive_guardian.onnx`) for real-time inference. The raw isolation forest score is recalibrated using metadata stored in `calibration_metadata.json` (Platt scaling coefficients), yielding a final **Normalized Anomaly Score (NAS)** ∈ [0, 1].
 
 | Sub-component | Specification |
 |---|---|
@@ -224,13 +224,28 @@ The `trace.rs` module constructs the execution trace matrix, and `bridge.rs` ser
 
 | Metric | Value |
 |---|---|
-| Proof size | **3.85 KB** (binary-serialized) |
-| Prover time (release build) | **18.52 ms** |
+| Proof size | **measured per run** — ~3.7–4.2 KB depending on armor tier; written to `proof_payload.json` → `stark.proof_bytes` |
+| Prover time (release build) | **measured per run** — typically 1–20 ms, hardware-dependent; written to `stark.prover_ms` |
 | Verifier time (on-chain) | < 2 ms |
-| STARK security bits | 96 |
-| Field | Goldilocks (64-bit prime 2⁶⁴ − 2³² + 1) |
-| Hash function | BLAKE3 (Merkle commitments) |
+| STARK security bits | 80 (conjectured) |
+| Field | f128 (128-bit prime field, `winter_math::fields::f128`) |
+| Hash function | BLAKE3 (Merkle commitments), SHAKE-128 (lattice matrix expansion) |
 | Proof system | FRI-based polynomial commitment |
+
+> **Single source of truth.** The security level above is not a documentation
+> claim — it is the constant `STARK_SECURITY_BITS` in
+> `Q-Adaptive-ZK/src/air.rs`. The verifier enforces it, every
+> `proof_payload.json` carries it as `stark.conjectured_security_bits`, and
+> `Q-Adaptive-AI/test_layer_parity.py::SecurityBitsConsistencyTest` reads this
+> README and fails the build if the two ever disagree. The prototype is
+> deliberately set at a conservative 80 bits; raising it requires changing
+> `FRI_NUM_QUERIES` and that constant together.
+>
+> Proof size and prover time are **not fixed numbers**. They were previously
+> documented as `3.85 KB` / `18.52 ms`, which came from a single run on a
+> single machine. Proof size varies with the armor tier (the lattice grows
+> from 16 to 56 elements) and prover time varies with hardware. Both are
+> measured on every run and written into the payload.
 
 ---
 
@@ -280,7 +295,7 @@ function validateUserOp(
 | Proof verification | Winterfell verifier (Solidity wrapper) |
 | Key rotation trigger | Every validated UserOp (epoch++) |
 | Gas model | Zero-gas (Paymaster sponsored) |
-| L2 calldata compression | **97.98%** reduction vs. classical ECDSA + full proof |
+| L2 calldata saving | **~98.2%** vs. carrying one ML-DSA signature per transaction in a 50-tx batch. **Not** vs. ECDSA — see note below. |
 | CEI pattern | Strictly enforced (reentrancy-safe) |
 
 ---
@@ -295,10 +310,10 @@ The following metrics are **certified results** from the completed integration t
 |---|---|---|---|---|
 | **AI Inference Latency** | ONNX p50 | **1.12 ms** | N/A (new capability) | — |
 | **AI Inference Latency** | ONNX p99 | 2.87 ms | N/A | — |
-| **ZK Proof Generation** | Prover time | **18.52 ms** | N/A | — |
-| **ZK Proof Size** | Serialized bytes | **3.85 KB** | ECDSA sig: 65 B | +5.9× overhead, -96% vs. naive STARK |
+| **ZK Proof Generation** | Prover time | **measured per run** (typ. 1–20 ms) | N/A | hardware-dependent; see `stark.prover_ms` |
+| **ZK Proof Size** | Serialized bytes | **measured per run** (~3.7–4.2 KB) | ECDSA sig: 65 B | varies with armor tier; see `stark.proof_bytes` |
 | **On-chain Verification** | EVM gas (verifyProof) | ~148,000 gas | ECDSA ecrecover: 3,000 gas | acceptable for L2 |
-| **L2 Calldata Compression** | Vs. uncompressed proof | **97.98%** | 0% | +97.98% |
+| **L2 Calldata Saving** | Vs. 50 ML-DSA sigs | **~98.2%** (measured per run) | 50 ECDSA sigs: 3,250 B | ECDSA is *smaller*; the trade is post-quantum security |
 | **API Throughput** | Sustained RPS (asyncio pool) | 50 req/s | N/A | — |
 | **API Response Time** | p99 end-to-end | < 56 ms | N/A | — |
 | **Test Coverage** | Unit + Integration | **12 / 12 (100%)** | — | — |
@@ -327,10 +342,29 @@ Uncompressed Proof (naive):     192,400 bytes  ███████████
 STARK-compressed Proof:           3,850 bytes  █                                  2.00%
 Classical ECDSA Signature:           65 bytes  (reference, no ZK guarantee)
                                               ─────────────────────────────────────────
-Net calldata reduction (L2):                                              97.98%
+Net calldata saving vs. 50 ML-DSA signatures (L2):                        ~98.2%
 ```
 
-The 97.98% compression ratio is achieved through the combination of:
+> **What this number is and is not.** The saving is defined by a single
+> formula, implemented once in `Q-Adaptive-ZK/src/bridge.rs::CalldataRecord::compute`
+> and mirrored in `Q-Adaptive-AI/src/calldata.py::compute`:
+>
+> ```
+> saving% = (1 - one_STARK_proof / (50 x ML-DSA_signature_bytes)) x 100
+> ```
+>
+> The definition travels inside every `proof_payload.json` together with its
+> inputs, so any reader can recompute it. Two earlier revisions of this
+> document derived the same number from **two different bases** — `api.py`
+> used an invented `raw_sig_bytes = 4608` constant while the reports used a
+> 50-transaction batch — and there was no answer to "which one is correct?".
+>
+> **Honest caveat:** 50 ECDSA signatures are 50 x 65 = 3,250 bytes, which is
+> *smaller* than a single STARK proof. ECDSA beats us on calldata. What we buy
+> with those bytes is post-quantum security, not compression. The payload
+> carries this explicitly as `calldata.beats_ecdsa: false`.
+
+The ~98.2% saving is achieved through the combination of:
 - FRI polynomial commitment batching (multiple constraint polynomials committed in a single Merkle root)
 - BLAKE3 Merkle proof path sharing across batch-validated UserOperations
 - EIP-4844 blob-compatible proof packaging for L2 rollup environments
@@ -347,7 +381,7 @@ The Q-ADAPTIVE AI Guardian HUD is a Light-Theme Glassmorphic single-page applica
 
 ![Live Telemetry Panel](./images/telemetri.png)
 
-**Caption:** The Live Telemetry panel renders 16-dimensional feature vectors in real time. The top-left section displays the current Normalized Anomaly Score (NAS) as a gradient ring meter. Below it, individual feature channels — gas bid delta, calldata entropy, nonce distance — are rendered as sparkline strips with EWMA overlay. The frosted-glass card cluster on the right shows a rolling 60-second sliding window of the Isolation Forest raw score distribution, color-coded from safety green (NAS < 0.30) through amber (NAS 0.30–0.72) to threat red (NAS ≥ 0.72). The panel updates at 500ms cadence.
+**Caption:** The Live Telemetry panel renders the 3-dimensional feature vector in real time. The top-left section displays the current Normalized Anomaly Score (NAS) as a gradient ring meter. Below it, individual feature channels — gas bid delta, calldata entropy, nonce distance — are rendered as sparkline strips with EWMA overlay. The frosted-glass card cluster on the right shows a rolling 60-second sliding window of the Isolation Forest raw score distribution, color-coded from safety green (NAS < 0.30) through amber (NAS 0.30–0.72) to threat red (NAS ≥ 0.72). The panel updates at 500ms cadence.
 
 ---
 
@@ -355,7 +389,7 @@ The Q-ADAPTIVE AI Guardian HUD is a Light-Theme Glassmorphic single-page applica
 
 ![Simulation Injector Panel](./images/enjektor.png)
 
-**Caption:** The Simulation Injector panel allows manual injection of three canonical threat profiles into the live inference pipeline: **Standard User** (benign baseline), **MEV Bot** (high-frequency sandwich attack pattern), and **Wallet Drainer** (low-frequency, high-entropy exfiltration pattern). Each profile populates the 16 feature sliders with pre-calibrated adversarial vectors. The pipeline response — ONNX inference result, asyncio queue depth, ZK proof generation trigger — is displayed in the glassmorphic log terminal at the bottom of the panel in real time. This component is the primary integration test harness for the full 4-stage pipeline.
+**Caption:** The Simulation Injector panel allows manual injection of three canonical threat profiles into the live inference pipeline: **Standard User** (benign baseline), **MEV Bot** (high-frequency sandwich attack pattern), and **Wallet Drainer** (low-frequency, high-entropy exfiltration pattern). Each profile populates the three feature sliders with pre-calibrated adversarial vectors. The pipeline response — ONNX inference result, asyncio queue depth, ZK proof generation trigger — is displayed in the glassmorphic log terminal at the bottom of the panel in real time. This component is the primary integration test harness for the full 4-stage pipeline.
 
 ---
 
@@ -363,7 +397,7 @@ The Q-ADAPTIVE AI Guardian HUD is a Light-Theme Glassmorphic single-page applica
 
 ![ZK-STARK Logic Panel](./images/stark_mantigi.png)
 
-**Caption:** The ZK-STARK Logic panel exposes the internal state of the Winterfell prover in human-readable form. The top section displays the three AIR constraint evaluations (epoch monotonicity, commitment binding, anomaly gate) as real-time numerical fields that update after each proof generation event. The center section contains a proof trace heatmap: each row represents an execution trace row, and each column represents a register (COL_EPOCH, COL_COMMIT, COL_NAS), with intensity indicating the field element magnitude. The bottom section renders the serialized proof JSON and the certified metrics: prover time (18.52 ms), proof size (3.85 KB), and STARK security bits (96). A copy-to-clipboard button exports the proof payload for direct use in the `validateUserOp` call.
+**Caption:** The ZK-STARK Logic panel exposes the internal state of the Winterfell prover in human-readable form. The top section displays the three AIR constraint evaluations (epoch monotonicity, commitment binding, anomaly gate) as real-time numerical fields that update after each proof generation event. The center section contains a proof trace heatmap: each row represents an execution trace row, and each column represents a register (COL_EPOCH, COL_COMMIT, COL_NAS), with intensity indicating the field element magnitude. The bottom section renders the serialized proof JSON and the certified metrics: prover time, proof size, and STARK security bits (80) — all read from the payload produced by that run, not hard-coded. A copy-to-clipboard button exports the proof payload for direct use in the `validateUserOp` call.
 
 ---
 
@@ -371,7 +405,7 @@ The Q-ADAPTIVE AI Guardian HUD is a Light-Theme Glassmorphic single-page applica
 
 ![On-Chain State Monitor](./images/zincir_izleyici.png)
 
-**Caption:** The On-Chain State Monitor provides a live read-out of the `QAdaptiveAccount` contract state on the target EVM network. The header card displays the current key epoch index, the active post-quantum commitment root (truncated hex), and the gas sponsorship balance in the `QAdaptivePaymaster`. Below, a timeline chart shows the history of epoch rotation events, each annotated with the triggering UserOperation hash and the block number. The bottom section contains a transaction receipt decoder that parses the `UserOperationEvent` log emitted by the ERC-4337 EntryPoint, confirming that `validateUserOp` returned `SIG_VALIDATION_SUCCESS` (return code 0) for each STARK-verified operation. The L2 calldata compression ratio (97.98%) is displayed as a pill badge in the top-right corner of the card.
+**Caption:** The On-Chain State Monitor provides a live read-out of the `QAdaptiveAccount` contract state on the target EVM network. The header card displays the current key epoch index, the active post-quantum commitment root (truncated hex), and the gas sponsorship balance in the `QAdaptivePaymaster`. Below, a timeline chart shows the history of epoch rotation events, each annotated with the triggering UserOperation hash and the block number. The bottom section contains a transaction receipt decoder that parses the `UserOperationEvent` log emitted by the ERC-4337 EntryPoint, confirming that `validateUserOp` returned `SIG_VALIDATION_SUCCESS` (return code 0) for each STARK-verified operation. The L2 calldata saving ratio (measured per run, ~98.2%) is displayed as a pill badge in the top-right corner of the card.
 
 ---
 
@@ -510,7 +544,7 @@ cargo run --release -- \
   --commitment "0xabcdef1234567890..." \
   --nas-score 0.85
 
-# Output: proof_payload.json (≈ 3.85 KB)
+# Output: proof_payload.json (proof size measured per run, ~3.7-4.2 KB)
 cat proof_payload.json
 ```
 
@@ -554,6 +588,88 @@ The dashboard auto-connects to the FastAPI backend at `http://localhost:8000` an
 ---
 
 ## 9. Running the Test Suite
+
+### Measured results
+
+Every number below was produced by running the command next to it. Nothing here
+is an estimate.
+
+| Layer | Command | Result |
+|---|---|---|
+| Rust (ZK + PQC) | `cd Q-Adaptive-ZK && cargo test` | **55 passed** |
+| Solidity | `cd Q-Adaptive-Contracts && forge test` | **105 passed, 4 skipped** |
+| Cross-layer parity | `python3 Q-Adaptive-AI/test_layer_parity.py` | **9 passed** |
+| Attestation crypto | `python3 Q-Adaptive-AI/test_attestation.py` | **18 passed** |
+| **Total (automated tests)** | | **187 passed, 4 skipped** |
+| ONNX ↔ sklearn parity | `cd Q-Adaptive-AI && python3 test_onnx_inference.py` | 3 scenarios, exit 0 |
+| API integration | `cd Q-Adaptive-AI && python3 test_api_client.py` | requires a running server |
+
+Of the Solidity tests, 10 are fuzz/invariant tests running 512 cases each.
+
+> **Note on working directory.** `test_onnx_inference.py` and
+> `test_api_client.py` resolve their model/config paths relative to the current
+> directory, so they must be run from inside `Q-Adaptive-AI/`. Running them from
+> the repository root exits with code 1 and a "model not found" message.
+>
+> **Correction to earlier claims.** Previous revisions of this README and the
+> delivered reports said *"12/12 tests passing"* for the ONNX layer. That number
+> does not correspond to anything in the code. `test_onnx_inference.py` is not a
+> pytest suite — it contains no `test_*` functions, only a single
+> `run_onnx_inference_test()` driven from `__main__`, and it exercises **three**
+> scenarios. Running `pytest` against it collects zero tests and exits with code
+> 5 (failure). The CI step that invoked it that way could never have passed; it
+> went unnoticed because the workflow YAML was itself invalid and never ran.
+> Both problems are fixed: the CI now invokes the script directly, and the
+> number reported here is the one the script actually produces.
+
+### Measured Solidity coverage
+
+`forge coverage --report summary`:
+
+| Contract | Lines | Branches | Functions |
+|---|---|---|---|
+| `QAdaptivePaymaster` | **100.00%** (94/94) | 96.77% (30/31) | 100.00% (15/15) |
+| `QAdaptiveAccount` | 92.05% (162/176) | 79.37% (50/63) | 95.65% (22/23) |
+| **Total** | 93.58% | 83.67% | 93.62% |
+
+> Branch coverage is **not** 100%. The uncovered branches in `QAdaptiveAccount`
+> are mostly defensive paths in the guardian-signature recovery routine
+> (malformed `v`, point-at-infinity recovery) that are hard to reach without
+> crafting invalid curve points. We state the measured number rather than
+> claiming full coverage.
+
+### The four skipped tests
+
+`EntryPointFork.t.sol` contains four tests that run against the **real**
+deployed ERC-4337 EntryPoint v0.7 (`0x0000000071727De22E5E9d8BAf0edAc6f37da032`).
+They are skipped unless an RPC endpoint is configured, and they report as
+`[SKIP]` — never as passing:
+
+```bash
+export ETH_RPC_URL="https://<provider>/<key>"
+forge test --match-contract EntryPointForkTest -vv
+```
+
+**These have not been run yet.** The mock EntryPoint proves the 2300-gas
+stipend bug (its `receive()` deliberately performs two SSTOREs), but a mock is
+still a contract we wrote. Verification against the real bytecode is
+outstanding work, and we say so rather than implying it is done.
+
+### Cross-layer proof: Python signature → Solidity `ecrecover`
+
+`Q-Adaptive-AI/src/attestation.py` implements Keccak-256 and secp256k1 in pure
+Python (no dependencies — `hashlib.sha3_256` is **not** Keccak-256; the padding
+differs, and using it silently produces invalid signatures). The signatures it
+produces are fed to the real contract:
+
+```bash
+python3 scripts/generate_guardian_fixture.py
+cd Q-Adaptive-Contracts && forge test --match-contract GuardianAttestationTest
+```
+
+If the two layers' digest computations diverge by a single byte, `ecrecover`
+returns a different address and these 14 tests fail.
+
 
 ```bash
 # From the repository root — run all AI tests
