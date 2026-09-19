@@ -1,0 +1,47 @@
+# =============================================================================
+# Q-ADAPTIVE Contracts — Foundry Yapılandırması
+# =============================================================================
+# Bu dosya daha önce YOKTU ve depoda tek bir `.t.sol` dosyası da yoktu.
+# Denetimin 8. bulgusu tam olarak buydu: Solidity tarafında sıfır test —
+# hâlbuki gerçek bir fon kaybı açığı (paymaster) orada duruyordu.
+#
+# Çalıştırma:
+#   forge install foundry-rs/forge-std --no-git
+#   forge build
+#   forge test -vv
+#   forge coverage --report summary
+# =============================================================================
+
+[profile.default]
+src     = "contracts"
+test    = "test"
+out     = "out"
+libs    = ["lib"]
+
+# Sözleşmeler `pragma solidity ^0.8.19` kullanıyor.
+solc_version = "0.8.24"
+
+optimizer      = true
+optimizer_runs = 200
+
+# Test çıktısında olayları ve konsol loglarını göster.
+verbosity = 2
+
+# GuardianAttestation.t.sol, Python'un ürettiği imza fixture'ını okur.
+# Yalnızca test/fixtures altına okuma izni verilir — daha geniş bir izin
+# gerekmiyor.
+fs_permissions = [{ access = "read", path = "./test/fixtures" }]
+
+# Fuzz testleri — zırh monotonluğu ve paymaster kotası gibi değişmezler
+# rastgele girdilerle zorlanır.
+[fuzz]
+runs = 512
+
+[invariant]
+runs  = 256
+depth = 64
+
+[fmt]
+line_length    = 100
+tab_width      = 4
+bracket_spacing = true

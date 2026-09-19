@@ -186,8 +186,91 @@ contract QAdaptiveAccount {
     mapping(bytes32 => PendingOp) public pendingTransactions;
 
     // ─────────────────────────────────────────────────────────────────────────
+    // BULGU 6 — Risk Skoru Kaynağı
+    // ─────────────────────────────────────────────────────────────────────────
+    //
+    // Eski kod `aiDynamicRiskScore`'u UserOperation'ın İMZA ALANINDAN çözüyordu:
+    //
+    //     (starkProofBytes, metadata, aiDynamicRiskScore) =
+    //         abi.decode(userOp.signature, (bytes, AirVerificationMetadata, uint256));
+    //     ...
+    //     if (aiDynamicRiskScore > rollingRiskThreshold) { reddet }
+    //
+    // Yani skoru yazan taraf ile işlemi gönderen taraf aynıydı. Anahtarı çalan
+    // biri skoru 0 yazıp AI kapısından doğrudan geçebilirdi. Kapı, kendisini
+    // açması gereken kişinin elindeydi.
+    //
+    // Artık skor üç kaynaktan gelir ve hiçbiri gönderenin yazdığı alan değildir.
+
+    /// @notice Risk skorunun hangi kaynaktan alınacağı.
+    enum RiskSource {
+        /// Zincir üstü AI Core oracle'ı (varsayılan).
+        AI_CORE_ORACLE,
+        /// Guardian'ın (Python katmanı) imzaladığı attestation.
+        GUARDIAN_SIGNATURE,
+        /// İkisinin BÜYÜĞÜ — hiçbir kaynak riski tek başına düşüremez.
+        HIGHEST_OF_BOTH
+    }
+
+    /**
+     * @notice Guardian'ın imzaladığı risk attestation'ı.
+     * @dev    `signature`, `_attestationDigest()` çıktısı üzerine atılmış
+     *         65 baytlık ECDSA imzasıdır. Digest userOpHash'i, skoru ve
+     *         son geçerlilik zamanını birlikte bağlar; böylece bir
+     *         attestation başka bir işleme taşınamaz (replay).
+     */
+    struct GuardianAttestation {
+        uint256 riskScore;
+        uint256 validUntil;
+        bytes   signature;
+    }
+
+    /// @notice Aktif risk kaynağı politikası.
+    RiskSource public riskSource;
+
+    /// @notice Guardian attestation'larını imzalamaya yetkili adres.
+    address public guardianSigner;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // HATA E4 — Zırh Kademesi (tek yönlü tırmanma)
+    // ─────────────────────────────────────────────────────────────────────────
+    //
+    // Kural zincir DIŞI katmanda vardı ama `updateQuantumArmor` hiçbir kontrol
+    // yapmadan kademeyi yazıyordu. EntryPoint yoluyla gelen bir çağrı zırhı
+    // ML-DSA-87'den ML-DSA-44'e DÜŞÜREBİLİYORDU.
+
+    /// @notice Aktif zırhın sırası (0=Standard, 1=44, 2=65, 3=87).
+    uint8 public currentArmorRank;
+
+    /// @notice Zırhın asla altına inemeyeceği taban sıra.
+    uint8 public armorBaselineRank;
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Events
     // ─────────────────────────────────────────────────────────────────────────
+
+    /// @notice Gönderenin iddia ettiği skor ile gerçek skor ayrıştığında.
+    /// @dev Bu olay, skoru düşürme girişimini zincire kalıcı olarak yazar.
+    event RiskScoreClaimMismatch(
+        bytes32 indexed opHash,
+        uint256 claimedScore,
+        uint256 resolvedScore
+    );
+
+    /// @notice Doğrulama sonucu — reddedişler artık YALNIZCA olay olarak kaydedilir.
+    event ValidationResult(bytes32 indexed opHash, bool accepted, bytes32 reason);
+
+    /// @notice Risk kaynağı politikası değiştiğinde.
+    event RiskSourceUpdated(RiskSource previous, RiskSource current);
+
+    /// @notice Guardian imzalayıcısı değiştiğinde.
+    event GuardianSignerUpdated(address previous, address current);
+
+    /// @notice Zırh düşürüldüğünde (yalnızca sahip yapabilir).
+    event QuantumArmorDowngraded(string newTier, uint8 newRank);
+
+    /// @notice Zırh taban sırası değiştiğinde.
+    event ArmorBaselineUpdated(uint8 previous, uint8 current);
 
     event QuantumArmorUpdated(string newTier, bytes32 newPublicKeyRoot);
     event SafeDestinationAdded(address indexed destination);
@@ -258,7 +341,8 @@ contract QAdaptiveAccount {
         address _entryPoint,
         address _aiCore,
         bytes32 _initialQuantumKey,
-        address _owner
+        address _owner,
+        address _guardianSigner
     ) {
         _status          = _NOT_ENTERED;
         entryPoint       = _entryPoint;
@@ -266,6 +350,15 @@ contract QAdaptiveAccount {
         quantumPublicKey = _initialQuantumKey;
         currentArmorTier = "Standard";
         owner            = _owner;
+
+        // Varsayılan politika: skoru oracle'dan al. Gönderenin imza alanındaki
+        // iddiası hiçbir koşulda karara girmez.
+        riskSource       = RiskSource.AI_CORE_ORACLE;
+        guardianSigner   = _guardianSigner;
+
+        // Zırh "Standard" (sıra 0) ile başlar ve buradan yalnızca yükselebilir.
+        currentArmorRank  = 0;
+        armorBaselineRank = 0;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -338,38 +431,58 @@ contract QAdaptiveAccount {
 
         // ── STEP 2: Decode hybrid signature payload ───────────────────
         //    Decode into local memory variables before any state write.
+        //
+        //    HATA E3 NOTU: Aşağıdaki reddediş yollarının hiçbiri artık
+        //    DEPOLAMAYA YAZMIYOR. Eskiden her reddediş `pendingTransactions`'a
+        //    yazıyordu; bu iki ayrı sorun üretiyordu:
+        //      • ERC-7562 (bundler simülasyon kuralları) ihlali — birçok
+        //        bundler böyle bir işlemi mempool'a hiç almaz,
+        //      • saldırgana ucuz depolama şişirme (storage-bloat DoS) vektörü:
+        //        geçersiz imzalarla sınırsız SSTORE tetiklenebiliyordu.
+        //    Reddedişler artık yalnızca `ValidationResult` olayıdır. Sahip
+        //    incelemek istediğini `stageForReview()` ile açıkça sıraya alır.
         bytes memory               starkProofBytes;
         AirVerificationMetadata    memory metadata;
-        uint256                    aiDynamicRiskScore; // risk% × 100 (0–10000)
+        uint256                    claimedRiskScore;   // GÖNDERENİN İDDİASI — güvenilmez
+        GuardianAttestation memory attestation;
 
         if (userOp.signature.length >= 64) {
             // Attempt decode; if the caller sends a malformed payload, decode
             // will revert which propagates upward as an operation-level failure.
             // This is the correct behavior: we never accept a malformed signature.
-            (starkProofBytes, metadata, aiDynamicRiskScore) = abi.decode(
+            (starkProofBytes, metadata, claimedRiskScore, attestation) = abi.decode(
                 userOp.signature,
-                (bytes, AirVerificationMetadata, uint256)
+                (bytes, AirVerificationMetadata, uint256, GuardianAttestation)
             );
         } else {
             // Signature payload is too short to contain any valid data.
-            // Stage to pendingTransactions for owner audit and halt.
-            pendingTransactions[userOpHash] = PendingOp({
-                executionTime: block.timestamp,
-                isActive:      true
-            });
-            emit ValidationStagedToQueue(userOpHash, 0, "SIG_FAIL");
+            emit ValidationResult(userOpHash, false, "SIG_TOO_SHORT");
             return SIG_VALIDATION_FAILED;
+        }
+
+        // ── STEP 2b: Gerçek risk skorunu ÇÖZ (gönderenden DEĞİL) ────────
+        //    `claimedRiskScore` yalnızca sapma olayını yayınlamak için
+        //    tutulur; karara asla girmez.
+        (uint256 resolvedRiskScore, bool riskResolved) =
+            _resolveRiskScore(userOpHash, attestation);
+
+        if (!riskResolved) {
+            emit ValidationResult(userOpHash, false, "RISK_UNRESOLVED");
+            return SIG_VALIDATION_FAILED;
+        }
+
+        if (claimedRiskScore != resolvedRiskScore) {
+            // Gönderen gerçek skordan farklı bir şey iddia etti. İşlem bu
+            // yüzden reddedilmez (iddia zaten yok sayılıyor) ama girişim
+            // zincire kalıcı olarak yazılır.
+            emit RiskScoreClaimMismatch(userOpHash, claimedRiskScore, resolvedRiskScore);
         }
 
         // ── STEP 3: Panic mode — enforce STARK proof length requirement ──
         if (isPanicMode) {
             if (starkProofBytes.length < MIN_STARK_PROOF_BYTES) {
-                // Proof absent or undersized: stage and reject.
-                pendingTransactions[userOpHash] = PendingOp({
-                    executionTime: block.timestamp,
-                    isActive:      true
-                });
-                emit ValidationStagedToQueue(userOpHash, aiDynamicRiskScore, "SIG_FAIL");
+                // Proof absent or undersized: reject (no storage write).
+                emit ValidationResult(userOpHash, false, "PROOF_TOO_SHORT");
                 return SIG_VALIDATION_FAILED;
             }
 
@@ -388,11 +501,7 @@ contract QAdaptiveAccount {
 
             if (metadata.start_a != expectedStartA) {
                 // Proof epoch mismatch — stale or forged public matrix.
-                pendingTransactions[userOpHash] = PendingOp({
-                    executionTime: block.timestamp,
-                    isActive:      true
-                });
-                emit ValidationStagedToQueue(userOpHash, aiDynamicRiskScore, "SIG_FAIL");
+                emit ValidationResult(userOpHash, false, "PROOF_EPOCH_MISMATCH");
                 return SIG_VALIDATION_FAILED;
             }
         }
@@ -403,14 +512,11 @@ contract QAdaptiveAccount {
         //    SlidingWindowThresholdCalibrator value (default 7500 = 75.00%).
         //    The owner calls updateRollingRiskThreshold() after each off-chain
         //    calibration cycle to keep both layers synchronized.
-        if (aiDynamicRiskScore > rollingRiskThreshold) {
+        //    DİKKAT: burada kullanılan değer `resolvedRiskScore`'dur —
+        //    gönderenin imza alanına yazdığı `claimedRiskScore` DEĞİL.
+        if (resolvedRiskScore > rollingRiskThreshold) {
             // Critical policy breach: risk exceeds the rolling window threshold.
-            // Cache the operation for post-incident forensic review.
-            pendingTransactions[userOpHash] = PendingOp({
-                executionTime: block.timestamp,
-                isActive:      true
-            });
-            emit ValidationStagedToQueue(userOpHash, aiDynamicRiskScore, "RISK_BREACH");
+            emit ValidationResult(userOpHash, false, "RISK_BREACH");
             return SIG_VALIDATION_FAILED;
         }
 
@@ -435,16 +541,153 @@ contract QAdaptiveAccount {
         //    by the onlyEntryPoint modifier. However, we still place it last
         //    as defense-in-depth per the CEI pattern.
         //
-        //    Gas stipend cap (2300): Limits the EntryPoint's ability to execute
-        //    complex code via fallback if it is ever compromised or replaced.
-        //    This is defense-in-depth; the onlyEntryPoint modifier is the primary
-        //    guard. 2300 gas is sufficient for logging but not state changes.
+        //    ── HATA E1: 2300 GAZ STIPEND'İ KALDIRILDI ──────────────────────
+        //
+        //    Eski satır şuydu:
+        //        payable(msg.sender).call{gas: 2300, value: missingAccountFunds}("")
+        //    ve gerekçesi "defense-in-depth" diye yazılmıştı.
+        //
+        //    Ancak gerçek ERC-4337 EntryPoint'in `receive()` fonksiyonu mevduat
+        //    muhasebesi için DEPOLAMAYA YAZAR (~20.000+ gaz) ve 2300 gaz bir
+        //    SSTORE'a yetmez. Yani bu çağrı gerçek bir EntryPoint'te HER ZAMAN
+        //    başarısız olurdu ve alttaki `require(success)` yüzünden HER İŞLEM
+        //    REVERT EDERDİ. Hesap canlı ağda hiçbir işlemi tamamlayamazdı.
+        //
+        //    Stipend'i kaldırmak yeniden giriş riski yaratmıyor:
+        //      • hedef `onlyEntryPoint` ile zorlanmış (msg.sender = EntryPoint),
+        //      • `nonReentrant` mutex'i açık,
+        //      • CEI sırası gereği tüm durum bu çağrıdan ÖNCE yazıldı.
         if (missingAccountFunds > 0) {
-            (bool success, ) = payable(msg.sender).call{gas: 2300, value: missingAccountFunds}("");
+            (bool success, ) = payable(msg.sender).call{value: missingAccountFunds}("");
             require(success, "QAdaptiveAccount: EntryPoint funding failed");
         }
 
+        emit ValidationResult(userOpHash, true, "OK");
         return SIG_VALIDATION_SUCCESS;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Risk Skoru Çözümlemesi (BULGU 6)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * @notice Gerçek risk skorunu politikaya göre çözer.
+     *
+     * @dev Üç kaynağın HİÇBİRİ gönderenin yazdığı alan değildir:
+     *        • AI_CORE_ORACLE     — zincir üstü oracle.
+     *        • GUARDIAN_SIGNATURE — guardian'ın imzaladığı attestation;
+     *                               `ecrecover` ile doğrulanır.
+     *        • HIGHEST_OF_BOTH    — ikisinin büyüğü, yani hiçbir kaynak
+     *                               riski tek başına DÜŞÜREMEZ.
+     *
+     * @return score    Çözülen risk skoru (risk% × 100).
+     * @return resolved Çözümleme başarılı mı (guardian imzası geçersizse false).
+     */
+    function _resolveRiskScore(
+        bytes32 userOpHash,
+        GuardianAttestation memory attestation
+    ) internal view returns (uint256 score, bool resolved) {
+        (uint256 oracleScore, ) = aiCore.getGlobalRiskStatus();
+
+        if (riskSource == RiskSource.AI_CORE_ORACLE) {
+            return (oracleScore, true);
+        }
+
+        // Guardian imzası gerekiyor — doğrula.
+        (uint256 guardianScore, bool ok) = _verifyAttestation(userOpHash, attestation);
+
+        if (riskSource == RiskSource.GUARDIAN_SIGNATURE) {
+            return (guardianScore, ok);
+        }
+
+        // HIGHEST_OF_BOTH: guardian imzası geçersizse oracle'a düşülür —
+        // ama bu güvenli yön, çünkü skor asla düşürülmez.
+        if (!ok) {
+            return (oracleScore, true);
+        }
+        return (guardianScore > oracleScore ? guardianScore : oracleScore, true);
+    }
+
+    /**
+     * @notice Guardian attestation'ının imzasını doğrular.
+     * @dev Digest userOpHash + skor + geçerlilik + bu sözleşme + zincir
+     *      kimliğini birlikte bağlar; attestation başka bir işleme veya
+     *      başka bir zincire taşınamaz.
+     */
+    function _verifyAttestation(
+        bytes32 userOpHash,
+        GuardianAttestation memory attestation
+    ) internal view returns (uint256 score, bool ok) {
+        if (guardianSigner == address(0)) return (0, false);
+        if (attestation.signature.length != 65) return (0, false);
+        if (attestation.validUntil < block.timestamp) return (0, false);
+
+        bytes32 digest = attestationDigest(
+            userOpHash, attestation.riskScore, attestation.validUntil
+        );
+
+        bytes32 r;
+        bytes32 s;
+        uint8   v;
+        bytes memory sig = attestation.signature;
+        assembly {
+            r := mload(add(sig, 32))
+            s := mload(add(sig, 64))
+            v := byte(0, mload(add(sig, 96)))
+        }
+
+        // EIP-2 gereği yüksek-s imzalar reddedilir (imza esnekliği savunması).
+        if (uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) {
+            return (0, false);
+        }
+        if (v != 27 && v != 28) return (0, false);
+
+        address recovered = ecrecover(digest, v, r, s);
+        if (recovered == address(0) || recovered != guardianSigner) {
+            return (0, false);
+        }
+
+        return (attestation.riskScore, true);
+    }
+
+    /**
+     * @notice Guardian'ın imzalaması gereken digest'i üretir.
+     * @dev Zincir dışı Python katmanı aynı digest'i hesaplayıp imzalar.
+     *      Dışarı açık çünkü test ve istemci tarafı buna ihtiyaç duyar.
+     */
+    function attestationDigest(
+        bytes32 userOpHash,
+        uint256 riskScore,
+        uint256 validUntil
+    ) public view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                keccak256("QAdaptiveRiskAttestation(bytes32 userOpHash,uint256 riskScore,uint256 validUntil,address account,uint256 chainId)"),
+                userOpHash,
+                riskScore,
+                validUntil,
+                address(this),
+                block.chainid
+            )
+        );
+        // EIP-191 kişisel imza ön-eki — Python tarafı `eth_account.sign_message`
+        // ile aynı biçimi üretir.
+        return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash));
+    }
+
+    /**
+     * @notice Sahip, reddedilmiş bir işlemi incelemek üzere açıkça sıraya alır.
+     *
+     * @dev HATA E3: Bu iş eskiden `validateUserOp` içinde OTOMATİK yapılıyordu
+     *      ve her reddediş bir SSTORE demekti. Artık sıraya alma, sahibin
+     *      bilinçli bir kararı — doğrulama yolu depolamaya dokunmuyor.
+     */
+    function stageForReview(bytes32 opHash) external onlyOwnerOrSelf {
+        pendingTransactions[opHash] = PendingOp({
+            executionTime: block.timestamp,
+            isActive:      true
+        });
+        emit ValidationStagedToQueue(opHash, 0, "MANUAL_STAGE");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -469,7 +712,18 @@ contract QAdaptiveAccount {
             );
         }
 
-        (bool success, bytes memory result) = target.call{value: value, gas: gasleft() - 5000}(data);
+        // ── HATA E7: elle gaz ayırma KALDIRILDI ─────────────────────────────
+        //
+        // Eski satır `gas: gasleft() - 5000` kullanıyordu. `gasleft() < 5000`
+        // olduğunda Solidity 0.8'de çıkarma taşması olur ve işlem, asıl
+        // sebebi gizleyen anlamsız bir panic(0x11) ile revert eder.
+        //
+        // Ayrıca ayırmanın kendisi gereksizdi: EIP-150'nin 63/64 kuralı
+        // gereği çağrılana gazın tamamı zaten geçmez, çağırana her hâlükârda
+        // 1/64'ü kalır. Elle yapılan ayırma bunu tekrarlıyordu.
+        require(gasleft() > 10_000, "QAdaptiveAccount: insufficient gas for execution");
+
+        (bool success, bytes memory result) = target.call{value: value}(data);
         if (!success) {
             assembly {
                 revert(add(result, 32), mload(result))
@@ -581,9 +835,124 @@ contract QAdaptiveAccount {
         string calldata newTier,
         bytes32         newPublicKey
     ) external onlyEntryPoint {
+        _applyArmorUpdate(newTier, newPublicKey);
+    }
+
+    /**
+     * @notice Zırh güncellemesini TEK YÖNLÜ TIRMANMA kuralıyla uygular.
+     *
+     * @dev HATA E4: Eski `updateQuantumArmor` hiçbir kontrol yapmadan kademeyi
+     *      yazıyordu. EntryPoint yoluyla gelen bir çağrı zırhı ML-DSA-87'den
+     *      ML-DSA-44'e DÜŞÜREBİLİYORDU — yani saldırgan, savunmayı güçlendirmek
+     *      için tasarlanmış fonksiyonu savunmayı zayıflatmak için kullanabilirdi.
+     *
+     *      Kural artık zincirde de zorlanıyor (zincir dışı `armor::decide` ile
+     *      aynı kural):
+     *        • kademe yalnızca YÜKSELEBİLİR,
+     *        • taban sıranın altına ASLA inilmez,
+     *        • düşürmenin tek yolu sahibin `downgradeArmor()` çağrısıdır.
+     */
+    function _applyArmorUpdate(string memory newTier, bytes32 newPublicKey) internal {
+        uint8 newRank = _tierRank(newTier);
+
+        require(
+            newRank >= armorBaselineRank,
+            "QAdaptiveAccount: tier below armor baseline"
+        );
+        require(
+            newRank >= currentArmorRank,
+            "QAdaptiveAccount: armor escalation is one-way"
+        );
+
+        currentArmorRank = newRank;
         currentArmorTier = newTier;
         quantumPublicKey = newPublicKey;
+
         emit QuantumArmorUpdated(newTier, newPublicKey);
+    }
+
+    /**
+     * @notice Sahip, zırhı bilinçli olarak düşürür.
+     * @dev Düşürmenin TEK yolu budur ve taban sıranın altına inemez.
+     *      `onlyEntryPoint` değil `onlyOwnerOrSelf` olması kasıtlı: bu bir
+     *      yönetim kararıdır, bir UserOperation yan etkisi değil.
+     */
+    function downgradeArmor(string calldata newTier, bytes32 newPublicKey)
+        external
+        onlyOwnerOrSelf
+    {
+        uint8 newRank = _tierRank(newTier);
+        require(
+            newRank >= armorBaselineRank,
+            "QAdaptiveAccount: tier below armor baseline"
+        );
+
+        currentArmorRank = newRank;
+        currentArmorTier = newTier;
+        quantumPublicKey = newPublicKey;
+
+        emit QuantumArmorDowngraded(newTier, newRank);
+    }
+
+    /**
+     * @notice Zırh taban sırasını yükseltir.
+     * @dev Taban yalnızca yükselebilir — aksi hâlde tek yönlü tırmanma
+     *      kuralı tabanı düşürerek dolanılabilirdi.
+     */
+    function raiseArmorBaseline(uint8 newBaseline) external onlyOwnerOrSelf {
+        require(newBaseline > armorBaselineRank, "QAdaptiveAccount: baseline is one-way");
+        require(newBaseline <= 3, "QAdaptiveAccount: unknown baseline rank");
+
+        uint8 previous    = armorBaselineRank;
+        armorBaselineRank = newBaseline;
+
+        // Mevcut zırh yeni tabanın altındaysa tabana çekilir.
+        if (currentArmorRank < newBaseline) {
+            currentArmorRank = newBaseline;
+        }
+
+        emit ArmorBaselineUpdated(previous, newBaseline);
+    }
+
+    /**
+     * @notice Zırh kademesi adını sıra numarasına çevirir.
+     *
+     * @dev Adlar, zincir dışı prover'ın ürettikleriyle BİREBİR aynıdır
+     *      (`MlDsaSecurityLevel::name()` — bkz. Q-Adaptive-ZK/src/trace.rs).
+     *      Bilinmeyen bir ad revert eder; sessizce 0 kabul edilseydi
+     *      yazım hatası olan bir kademe zırhı düşürürdü.
+     *
+     *      Fonksiyon seçicisi kasıtlı olarak değiştirilmedi
+     *      (`updateQuantumArmor(string,bytes32)`), çünkü Paymaster tam olarak
+     *      bu seçiciyi sponsorluyor.
+     */
+    function _tierRank(string memory tier) internal pure returns (uint8) {
+        bytes32 h = keccak256(bytes(tier));
+
+        if (h == keccak256(bytes("Standard")))                return 0;
+        if (h == keccak256(bytes("ML-DSA-44")))               return 1;
+        if (h == keccak256(bytes("ML-DSA-65")))               return 2;
+        if (h == keccak256(bytes("ML-DSA-87 (Dilithium-5)"))) return 3;
+
+        revert("QAdaptiveAccount: unknown armor tier");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Risk Kaynağı Yönetimi
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// @notice Risk skorunun hangi kaynaktan alınacağını belirler.
+    function setRiskSource(RiskSource newSource) external onlyOwnerOrSelf {
+        RiskSource previous = riskSource;
+        riskSource = newSource;
+        emit RiskSourceUpdated(previous, newSource);
+    }
+
+    /// @notice Guardian attestation'larını imzalamaya yetkili adresi ayarlar.
+    function setGuardianSigner(address newSigner) external onlyOwnerOrSelf {
+        address previous = guardianSigner;
+        guardianSigner = newSigner;
+        emit GuardianSignerUpdated(previous, newSigner);
     }
 
     /**
