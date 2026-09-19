@@ -37,6 +37,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -54,6 +55,19 @@ from scipy.stats import norm
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.utils import setup_logger
 from src.model import _THRESHOLD_CALIBRATOR, SlidingWindowThresholdCalibrator
+from src import armor, calldata
+from src.armor import ArmorTier
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Zırh Tabanı
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Hesabın taban zırh kademesi. Tek yönlü tırmanma kuralı gereği seçilen
+# kademe asla bunun altına inemez — manipüle edilmiş düşük bir risk skoru
+# bile zırhı düşüremez. Aynı kural zincirde de uygulanır.
+_BASELINE_ARMOR: ArmorTier = ArmorTier.parse(
+    os.getenv("Q_ADAPTIVE_BASELINE_ARMOR", "44")
+)
 
 logger = setup_logger("Q-ADAPTIVE.API")
 
@@ -158,7 +172,9 @@ async def lifespan(app: FastAPI):
     # ── Async ZK kanıt kuyruğu oluştur ───────────────────────────────────────
     # asyncio.Queue, asyncio döngüsünün içinde oluşturulmalıdır.
     # maxsize=50: eş zamanlı 50 istek sınırı. Aşılırsa HTTP 429 döner.
-    _ZK_PROOF_QUEUE = asyncio.Queue(maxsize=50)
+    _kapasite, _gerekce = _resolve_queue_capacity()
+    _ZK_PROOF_QUEUE = asyncio.Queue(maxsize=_kapasite)
+    logger.info("ZK kuyruk kapasitesi gerekçesi: %s", _gerekce)
     logger.info(
         "✅ Async ZK kanıt kuyruğu oluşturuldu (maxsize=%d)", _ZK_PROOF_QUEUE.maxsize
     )
@@ -353,9 +369,83 @@ def _onnx_infer(islem: float, ip: float, gas: float) -> tuple[float, int]:
     return risk_pct, label
 
 
-async def _run_zk_prover_async() -> tuple[float, dict]:
+def _resolve_queue_capacity() -> tuple[int, str]:
+    """ZK kanıt kuyruğunun kapasitesini makinenin kaynaklarından türetir.
+
+    **Neden sabit 50 değil:**
+      50 sayısı hiçbir kaynak ölçümüne dayanmıyordu. Tam ölçekli bir STARK
+      kanıtlayıcısında 50 eşzamanlı kanıt ≈ 50 CPU çekirdeği + onlarca GB RAM
+      demektir. 2 çekirdekli bir sunucuda 50 slot açmak korumayı **etkisiz**
+      kılar: kuyruk hiç dolmaz ama makine çöker. Yani "DoS koruması" diye
+      sunulan şey, koruduğunu iddia ettiği senaryoda çalışmıyordu.
+
+    Kapasite iki üst sınırın küçüğüdür:
+      • çekirdek sayısı (kanıt üretimi CPU-yoğun),
+      • kullanılabilir bellek / kanıt başına tahmini bellek.
+
+    ``Q_ADAPTIVE_ZK_QUEUE_MAX`` ortam değişkeniyle geçersiz kılınabilir.
+
+    Returns:
+        ``(kapasite, gerekçe_metni)`` — gerekçe ``/api/health`` üzerinden
+        raporlanır ki sayının nereden geldiği görünür olsun.
+    """
+    override = os.getenv("Q_ADAPTIVE_ZK_QUEUE_MAX")
+    if override:
+        try:
+            deger = max(1, int(override))
+            return deger, f"Q_ADAPTIVE_ZK_QUEUE_MAX={override} ile elle ayarlandı"
+        except ValueError:
+            logger.warning(
+                "Q_ADAPTIVE_ZK_QUEUE_MAX=%r tamsayı değil — yok sayılıyor.", override
+            )
+
+    cekirdek = os.cpu_count() or 1
+
+    # Kanıt başına kabaca ayrılan bellek. Ölçüm arttıkça bu sayı güncellenmeli;
+    # şu an temkinli bir üst sınır olarak duruyor.
+    GB = 1024 ** 3
+    bellek_per_kanit_gb = 0.5
+
+    try:
+        kullanilabilir_gb = (os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")) / GB
+        bellek_siniri = int(kullanilabilir_gb / bellek_per_kanit_gb)
+        bellek_gerekce = (
+            f"{kullanilabilir_gb:.1f} GB / {bellek_per_kanit_gb} GB-per-proof = {bellek_siniri}"
+        )
+    except (ValueError, OSError, AttributeError):
+        # sysconf her platformda yok (ör. Windows) — bu durumda yalnızca
+        # çekirdek sayısına bakılır ve bu gerekçede açıkça yazılır.
+        bellek_siniri = cekirdek
+        bellek_gerekce = "bellek okunamadı, çekirdek sayısı kullanıldı"
+
+    ham = min(cekirdek, bellek_siniri)
+    kapasite = max(1, min(64, ham))
+
+    gerekce = (
+        f"{cekirdek} çekirdek ; {bellek_gerekce} "
+        f"→ min = {ham} → clamp[1,64] = {kapasite}"
+    )
+    return kapasite, gerekce
+
+
+async def _run_zk_prover_async(
+    decision_risk : float,
+    decision_tau  : float,
+    baseline      : ArmorTier,
+    user_op_hash  : str,
+    epoch_ns      : int,
+    run_id        : str,
+) -> tuple[float, dict]:
     """
     Önceden derlenmiş Rust ZK-STARK prover binary'sini asenkron olarak çalıştırır.
+
+    Args:
+        decision_risk: AI'ın ürettiği risk yüzdesi — prover'a `--risk-score`.
+        decision_tau:  Dinamik eşik τ(t) — prover'a `--tau`.
+        baseline:      Hesabın taban zırhı — prover'a `--baseline`.
+        user_op_hash:  Kanıtın bağlanacağı UserOperation özeti.
+        epoch_ns:      Dönem damgası (nanosaniye). ρ' türetimine girer.
+        run_id:        Koşu kimliği — log ↔ payload eşleştirmesi için.
 
     Güvenlik Tasarımı:
     ──────────────────
@@ -383,11 +473,32 @@ async def _run_zk_prover_async() -> tuple[float, dict]:
     logger.info("🔐 Async ZK-STARK kanıt üretimi başlatılıyor (binary=%s)", _ZK_BINARY_PATH.name)
     t0 = time.perf_counter()
 
+    # ── BULGU 2 DÜZELTMESİ: prover'a gerçek argümanlar geçiyor ───────────────
+    #
+    # Eski çağrı şöyleydi:
+    #     asyncio.create_subprocess_exec(str(_ZK_BINARY_PATH), cwd=..., ...)
+    # yani argüman listesi BOŞTU. Prover her koşuda kendi varsayılanlarıyla
+    # (risk 98.52, zırh ML-DSA-87) çalışıyordu. Kafes koşudan koşuya
+    # değişiyordu ama ZAMANA bağlı olarak — AI'ın kararına bağlı olarak değil.
+    # "AI kararı kriptografiyi değiştiriyor" iddiasının kodda karşılığı yoktu.
+    #
+    # Artık yedi argüman geçiyor; risk değişince kafes 16 → 30 → 56 elemana,
+    # imza 2.420 → 3.309 → 4.627 bayta çıkıyor.
+    prover_args = [
+        "--risk-score",   f"{decision_risk:.6f}",
+        "--tau",          f"{decision_tau:.6f}",
+        "--baseline",     baseline.cli_value,
+        "--user-op-hash", user_op_hash or "",
+        "--epoch-ns",     str(epoch_ns),
+        "--run-id",       run_id,
+    ]
+
+    logger.info("ZK prover argümanları: %s", " ".join(prover_args))
+
     try:
         proc = await asyncio.create_subprocess_exec(
             str(_ZK_BINARY_PATH),
-            # Rho-prime seed —  yeni parametre; main.rs --rho-prime CLI argümanı
-            # ile entegre edilmiştir. Gelecekte: seed burada üretilip geçilecek.
+            *prover_args,
             cwd    = str(_ZK_ROOT),
             stdout = asyncio.subprocess.PIPE,
             stderr = asyncio.subprocess.PIPE,
@@ -431,9 +542,19 @@ async def _run_zk_prover_async() -> tuple[float, dict]:
     return prover_ms, proof_data
 
 
-async def _invoke_zk_prover_with_queue_guard() -> tuple[float, dict]:
+async def _invoke_zk_prover_with_queue_guard(
+    decision_risk : float,
+    decision_tau  : float,
+    baseline      : ArmorTier,
+    user_op_hash  : str,
+    epoch_ns      : int,
+    run_id        : str,
+) -> tuple[float, dict]:
     """
     asyncio.Queue ile hız sınırlı ZK prover çağrısı.
+
+    Argümanlar olduğu gibi `_run_zk_prover_async`'e aktarılır; bu katman
+    yalnızca eşzamanlılık sınırını uygular.
 
     Tasarım:
     ─────────
@@ -483,8 +604,15 @@ async def _invoke_zk_prover_with_queue_guard() -> tuple[float, dict]:
     )
 
     try:
-        # Asenkron prover çalıştır
-        return await _run_zk_prover_async()
+        # Asenkron prover çalıştır — kararın tüm girdileri prover'a geçer.
+        return await _run_zk_prover_async(
+            decision_risk = decision_risk,
+            decision_tau  = decision_tau,
+            baseline      = baseline,
+            user_op_hash  = user_op_hash,
+            epoch_ns      = epoch_ns,
+            run_id        = run_id,
+        )
     finally:
         # Slot her zaman serbest bırakılır — başarı veya hata durumunda
         await _ZK_PROOF_QUEUE.get()
@@ -617,14 +745,27 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
         payload.Gas_Sapmasi,
     )
 
-    # Panik kararı: dinamik eşik kullanılır (statik değil)
-    is_panic   = risk_pct >= dynamic_threshold
+    # ── BULGU 3 + 4 DÜZELTMESİ: karar TEK kuraldan geliyor ───────────────────
+    #
+    # Eskiden karar burada, Rust'takinden FARKLI bir kuralla veriliyordu ve
+    # zırh yalnızca bir metindi:
+    #     armor_tier = "ML-DSA-87" if is_panic else "ML-DSA-44"
+    # Bu metnin kriptografik hiçbir karşılığı yoktu — JSON'a yazılıp
+    # geçiliyordu. Artık kademe `armor.decide`'dan geliyor, prover'a argüman
+    # olarak gidiyor ve imza boyutunu GERÇEKTEN değiştiriyor.
+    decision = armor.decide(risk_pct, dynamic_threshold, _BASELINE_ARMOR)
+
+    is_panic   = decision.proof_required
     action     = "TRIGGER_PANIC_MODE" if is_panic else "SAFE"
-    armor_tier = "ML-DSA-87" if is_panic else "ML-DSA-44"
+    armor_tier = decision.level.display
+
+    # Koşu kimliği ve dönem damgası — prover'a geçer, payload'a yazılır.
+    run_id   = uuid.uuid4().hex[:12]
+    epoch_ns = time.time_ns()
 
     logger.info(
-        "Risk: %.2f%% | τ(t): %.2f%% | Eylem: %s | Zırh: %s",
-        risk_pct, dynamic_threshold, action, armor_tier,
+        "Risk: %.2f%% | τ(t): %.2f%% | Aşım: %.2f | Eylem: %s | Zırh: %s | Koşu: %s",
+        risk_pct, dynamic_threshold, decision.asim, action, armor_tier, run_id,
     )
 
     # ── ADIM 3 & 4: Async ZK-STARK (Yalnızca Panik Modunda) ──────────────────
@@ -637,24 +778,49 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
     evm_start_t             = 0
     rho_prime_hex           = ""
 
+    # Kanıt üretilemezse yanıt "degraded" olarak işaretlenir — asla bayat
+    # bir dosyayla doldurulmaz (bkz. aşağıdaki BULGU 3b notu).
+    response_status  = decision.status
+    proof_generated  = False
+    calldata_record  = None
+
     if is_panic:
         try:
             # asyncio.Queue hız sınırlayıcısı ile async prover çağrısı.
             # Kuyruk doluysa (saldırı senaryosu) bu satır HTTP 429 fırlatır.
-            prover_time_ms, proof_data = await _invoke_zk_prover_with_queue_guard()
+            prover_time_ms, proof_data = await _invoke_zk_prover_with_queue_guard(
+                decision_risk = risk_pct,
+                decision_tau  = dynamic_threshold,
+                baseline      = _BASELINE_ARMOR,
+                user_op_hash  = getattr(payload, "user_op_hash", "") or "",
+                epoch_ns      = epoch_ns,
+                run_id        = run_id,
+            )
 
             # Kanıt boyutunu hex'ten hesapla
-            hex_proof    = proof_data.get("stark_proof_bytes_hex", "")
+            hex_proof     = proof_data.get("stark_proof_bytes_hex", "")
             proof_size_kb = _proof_size_kb(hex_proof) if hex_proof else 0.0
 
-            # Calldata emilim oranı: sıkıştırılmış / ham kanıt boyutu
-            raw_sig_bytes           = 4608.0
-            compressed_bytes        = proof_size_kb * 1024.0
-            calldata_absorption_pct = min(
-                99.9,
-                max(0.0, (1.0 - compressed_bytes / (raw_sig_bytes + compressed_bytes)) * 100.0)
-                    if (raw_sig_bytes + compressed_bytes) > 0 else 0.0,
+            # ── BULGU 13 DÜZELTMESİ: calldata TEK formülden ──────────────────
+            #
+            # Eski hesap şuydu:
+            #     raw_sig_bytes = 4608.0
+            #     pct = (1 - kanıt / (4608 + kanıt)) * 100
+            # `4608` hiçbir yerden gelmiyordu ve raporlardaki 50'lik parti
+            # hesabıyla aynı sayıyı FARKLI bir tabandan üretiyordu.
+            #
+            # Artık taban, prover'ın bu koşuda ÖLÇTÜĞÜ gerçek ML-DSA imza
+            # boyutudur ve formül payload'da taşınır.
+            pqc_meta       = proof_data.get("pqc") or {}
+            signature_bytes = int(
+                pqc_meta.get("signature_bytes", decision.level.signature_bytes)
             )
+            calldata_record = calldata.compute(
+                batch_size             = calldata.DEFAULT_BATCH_SIZE,
+                single_signature_bytes = signature_bytes,
+                stark_proof_bytes      = int(proof_size_kb * 1024.0),
+            )
+            calldata_absorption_pct = calldata_record.savings_pct
 
             # AIR sınır koşulları
             air_meta     = proof_data.get("air_verification_metadata", {})
@@ -664,12 +830,13 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
             evm_start_t  = int(air_meta.get("start_t",  0))
 
             # Rho-prime hex — rotasyon doğrulaması için yeni alan
-            rho_prime_hex = str(proof_data.get("rho_prime_hex", ""))
+            rho_prime_hex   = str(proof_data.get("rho_prime_hex", ""))
+            proof_generated = True
 
             logger.info(
-                "ZK payload — boyut=%.2f KB, süre=%.1f ms, "
+                "ZK payload — boyut=%.2f KB, süre=%.1f ms, imza=%d B, "
                 "start=[a=%d, s1=%d, s2=%d, t=%d], rho_prime=%s...",
-                proof_size_kb, prover_time_ms,
+                proof_size_kb, prover_time_ms, signature_bytes,
                 evm_start_a, evm_start_s1, evm_start_s2, evm_start_t,
                 rho_prime_hex[:16] if rho_prime_hex else "N/A",
             )
@@ -678,30 +845,34 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
             # HTTP 429 (kuyruk dolu) — yeniden fırlat, gizleme
             raise
         except Exception as exc:
-            logger.warning("ZK-STARK kanıt üretimi başarısız: %s — Önbellek kontrol ediliyor.", exc)
-            # Panik modunda proof üretimi başarısız olsa dahi yanıt döndürülür.
-            if _PROOF_PATH.exists():
-                try:
-                    with open(_PROOF_PATH, encoding="utf-8") as f:
-                        proof_data   = json.load(f)
-                    hex_proof        = proof_data.get("stark_proof_bytes_hex", "")
-                    proof_size_kb    = _proof_size_kb(hex_proof) if hex_proof else 0.0
-                    air_meta         = proof_data.get("air_verification_metadata", {})
-                    evm_start_a      = int(air_meta.get("start_a",  0))
-                    evm_start_s1     = int(air_meta.get("start_s1", 0))
-                    evm_start_s2     = int(air_meta.get("start_s2", 0))
-                    evm_start_t      = int(air_meta.get("start_t",  0))
-                    rho_prime_hex    = str(proof_data.get("rho_prime_hex", ""))
-                    logger.info("Önbellek proof_payload.json kullanıldı.")
-                except Exception:
-                    pass
+            # ── BULGU 3b DÜZELTMESİ: BAYAT DOSYA GERİ DÖNÜŞÜ SİLİNDİ ─────────
+            #
+            # Burada eskiden şu vardı: prover başarısız olursa diskteki
+            # `proof_payload.json` okunup yanıta konuyordu ve yanıt normal bir
+            # başarı yanıtı gibi dönüyordu.
+            #
+            # Sonucu şuydu: sahnede "bakın, kanıt üretildi" denilen şey
+            # saatler önceki bir koşudan kalma bayat bir dosya olabilirdi.
+            # Jüriye gösterilen rho_prime ve AIR sınır koşulları o anki
+            # işlemle hiç ilgili olmayabilirdi.
+            #
+            # Artık geri dönüş YOK. Kanıt üretilemezse bu açıkça bildirilir.
+            logger.error(
+                "ZK-STARK kanıt üretimi başarısız (koşu=%s): %s — "
+                "yanıt 'degraded' olarak işaretleniyor, önbellek KULLANILMIYOR.",
+                run_id, exc,
+            )
+            response_status = "degraded"
+            proof_generated = False
 
     # ── ADIM 5: Genişletilmiş Yanıt ──────────────────────────────────────────
     # Anlık kuyruk doluluk sayısını al (frontend HUD için)
     _current_queue_size = _ZK_PROOF_QUEUE.qsize() if _ZK_PROOF_QUEUE else 0
 
     response = ExtendedPredictResponse(
-        status = "success",
+        # Kanıt üretilemediyse bu alan "degraded" olur — yanıt asla bayat bir
+        # dosyayla doldurulup "success" diye sunulmaz (bulgu 3b).
+        status = "success" if response_status != "degraded" else "degraded",
         action = action,
         ai_metrics = AiMetrics(
             risk_score                 = round(risk_pct, 4),
