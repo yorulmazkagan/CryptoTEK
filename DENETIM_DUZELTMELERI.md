@@ -193,9 +193,24 @@ Bu belgedeki her şey çalıştırılarak doğrulandı, **aşağıdakiler hariç
 | Öğe | Durum | Neden |
 |---|---|---|
 | `EntryPointFork.t.sol` (4 test) | **Hiç koşulmadı** | Gerçek EntryPoint v0.7 fork testi; RPC erişimi yoktu. Test `[SKIP]` raporlar, asla sahte `[PASS]` vermez. |
-| `.solhint.json` yapılandırması | **Doğrulanmadı** | npm erişimi yoktu; belgelenmiş davranışa göre yazıldı, ilk CI koşusunda sınanacak. |
-| TruffleHog düzeltmesi | **Doğrulanmadı** | Aynı sebep. |
-| `test_api_client.py` | **Koşulmadı** | Çalışan bir sunucu gerektiriyor. |
+| `.solhint.json` yapılandırması | ✅ **CI'da doğrulandı** (#9–#11) | Yazıldığında npm erişimi yoktu; koşu #9'da geçti, #11'de Solidity kaynaklı sıfır uyarı. |
+| TruffleHog düzeltmesi | ✅ **CI'da doğrulandı** (#8) | `--fail` tekrarı giderildikten sonra iş yeşil; artık tüm dosya sistemini tarıyor. |
+| Slither | ✅ **CI'da doğrulandı** (#10–#11) | İlk kez gerçek çıktı üretti (0 high, 4 medium). Triyaj edildi, 3 gerçek sorun düzeltildi, #11'de bulgu kalmadı, `continue-on-error` kaldırıldı. Bkz. `Q-Adaptive-Contracts/SLITHER_TRIYAJI.md`. |
+| `test_api_client.py` | ✅ **CI'da koşuyor** (#8+) | Yerelde koşulamıyordu (sunucu gerekiyor); CI sunucuyu ayağa kaldırıp çalıştırıyor. |
+
+### CI'ın kendisi hakkında — dördüncü kez aynı tuzak
+
+Bu oturumda **dört kez** "koştuğu iddia edilen ama hiçbir şey yapmayan
+kontrol" ile karşılaşıldı:
+
+1. CI geçersiz YAML yüzünden koşmuyordu (E20)
+2. TruffleHog `base == head` olduğu için hiçbir şey taramıyordu — **iş yeşildi**
+3. Slither `forge` bulunamadığı için anında çöküyordu — `continue-on-error` gizliyordu
+4. Slither dedektör adımı `| tee` ile çalışıyor; `pipefail` olmadan `slither`
+   düşse bile `tee` sıfır döndürüp kapıyı sessizce açacaktı — **fark edilip
+   eklendi**
+
+Dördü de hiç olmayan bir kontrolden tehlikeliydi, çünkü yanlış güven veriyordu.
 
 ### Fork testini çalıştırmak
 

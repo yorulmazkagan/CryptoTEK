@@ -308,7 +308,12 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install Slither
-        run: pip install slither-analyzer
+        # Surum sabitlendi (solhint@5 ile ayni gerekce): Slither ana surumleri
+        # yeni dedektorler ekliyor. Sabitlenmezse bugun yesil olan CI, bizim
+        # hicbir sey degistirmedigimiz bir gun kendiliginden kirilir.
+        # Yukseltme bilincli bir karar olmali: surumu burada artir, bulgulari
+        # triyaj et, SLITHER_TRIYAJI.md'yi guncelle.
+        run: pip install slither-analyzer==0.11.6
 
       # ZAFIYET TARAMASI — asil is bu adim.
       #
@@ -329,12 +334,27 @@ jobs:
       # Cikti hem loga hem dosyaya yazilir. Dosya artefakt olarak yuklenir;
       # boylece raporu okumak icin GitHub'in log goruntuleyicisinde kaydirmak
       # gerekmez — tek tiklamayla indirilir.
+      # ARTIK GERCEK BIR KAPI — `continue-on-error` KALDIRILDI.
+      #
+      # Kosu #10'da bulgular ilk kez okundu ve triyaj edildi
+      # (SLITHER_TRIYAJI.md). Uc gercek sorun duzeltildi, gerekceli olanlar
+      # slither.config.json ile disllandi. Kosu #11'de geriye bulgu kalmadi.
+      #
+      # Bu satirin kaldirilmasi, "Slither'dan geciyoruz" ifadesinin ilk kez
+      # dayanagi oldugu an. Yeni bir bulgu cikarsa CI GERCEKTEN kirilir.
+      #
+      # NOT: `tee` kullanildigi icin cikis kodu boru hattinin SON komutundan
+      # gelir. `pipefail` olmadan `slither` duşse bile `tee` 0 dondurur ve
+      # kapi yine sessizce acilir — bu yuzden `set -o pipefail` sart.
       - name: Slither vulnerability detectors
-        run: slither . 2>&1 | tee slither-report.txt
-        continue-on-error: true   # bulgular triyaj edilene kadar tavsiye niteliginde
+        run: |
+          set -o pipefail
+          slither . 2>&1 | tee slither-report.txt
 
       # Bilgilendirme: sozlesme sayisi, satir sayisi, karmasiklik ozeti.
-      # Zafiyet aramaz; yukaridaki adimin isini yapmaz.
+      # Zafiyet aramaz; yukaridaki adimin isini yapmaz. Ozet basmak
+      # basarisiz olsa bile bu CI'i kirmamali, o yuzden burada
+      # `continue-on-error` KALIYOR.
       - name: Slither human-readable summary
         run: slither . --print human-summary 2>&1 | tee -a slither-report.txt
         continue-on-error: true

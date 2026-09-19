@@ -120,11 +120,33 @@ bilinçli olarak `false`: yeni bir bulgu çıkarsa görünmesini istiyoruz.
 
 ---
 
-## 4. Kalan iş
+## 4. Slither artık gerçek bir kapı
 
-`continue-on-error: true` hâlâ duruyor. Bir sonraki koşuda bu triyajdan
-sonra kaç bulgu kaldığını görüp, sayı sıfırlanırsa o satır **kaldırılmalı** —
-ancak o zaman "Slither'dan geçiyoruz" demek için dayanak olur.
+**Koşu #11'de geriye bulgu kalmadı** — annotations'ta Slither kaynaklı hiçbir
+hata yok. Bunun üzerine `continue-on-error: true` satırı dedektör adımından
+**kaldırıldı**.
+
+Bu, "Slither'dan geçiyoruz" ifadesinin ilk kez bir dayanağı olduğu an. Yeni
+bir bulgu çıkarsa CI **gerçekten kırılır**.
+
+### İki koruma daha eklendi
+
+**`set -o pipefail`** — dedektör adımı `slither . | tee slither-report.txt`
+şeklinde çalışıyor. Boru hattında çıkış kodu **son** komuttan gelir; yani
+`pipefail` olmadan `slither` düşse bile `tee` sıfır döndürür ve kapı sessizce
+açılırdı. Bu, aynı oturumda üç kez düştüğümüz "yeşil ama boş" tuzağının
+dördüncüsü olurdu.
+
+**Sürüm sabitlendi** — `slither-analyzer==0.11.6`. Ana sürümler yeni
+dedektörler ekliyor; sabitlenmezse bugün yeşil olan CI, biz hiçbir şey
+değiştirmediğimiz bir gün kendiliğinden kırılır. Yükseltme bilinçli bir karar
+olmalı: sürümü `ci.yml`'de artır, bulguları triyaj et, bu dosyayı güncelle.
+
+### Özet tablosu neden hâlâ tavsiye niteliğinde
+
+`--print human-summary` adımında `continue-on-error` **bilerek duruyor**. O
+adım zafiyet aramaz, yalnızca istatistik basar; basmayı beceremezse bu CI'ı
+kırmak için bir sebep değildir.
 
 ```bash
 cd Q-Adaptive-Contracts
