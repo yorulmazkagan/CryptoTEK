@@ -29,6 +29,7 @@ tabanının bilinçli bir tasarım kararına karşılık geliyor** — hiçbiri 
 | `no-empty-blocks` | `receive() external payable {}` bilinçli olarak boş. |
 | `max-states-count` | Paymaster'ın dört bağımsız kapısı (gönderen kaydı, işlem tavanı, hesap kotası, dönem bütçesi) kaçınılmaz olarak çok sayıda durum değişkeni gerektiriyor. Bu, BULGU 5'i kapatmanın bedeli. |
 | `ordering` | Dosyalar mantıksal gruplara göre düzenlenmiş (kapılar, yönetim, mevduat), solhint'in beklediği katı sıraya göre değil. |
+| `var-name-mixedcase` | `AirVerificationMetadata` alanları (`start_a`, `start_s1`, `start_s2`, `start_t`, `final_a`, `final_s1`, `final_s2`, `final_t`) kasıtlı olarak snake_case. **Üç katman arasında alan adı hizası** gerekiyor: Rust'taki `bridge.rs::AirVerificationMetadata` ve `proof_payload.json`'daki anahtarlar birebir bu adlar. `startA` yapılsaydı Python katmanının payload'dan okuduğu anahtarlarla eşleşme bozulurdu. Kural 8 tekrarlayan uyarı üretiyordu ve gerçek uyarıları gizleme riski vardı. |
 
 ## Uyarıya indirilenler
 

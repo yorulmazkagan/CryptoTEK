@@ -258,8 +258,31 @@ jobs:
         working-directory: Q-Adaptive-Contracts
 
     steps:
+      # forge-std submodule'u Slither icin sart: crytic-compile sozlesmeleri
+      # `forge build` ile derliyor ve test/ altindaki dosyalar forge-std'ye
+      # bagimli.
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Foundry KURULMASI GEREKIYOR — yoksa Slither hic calismaz.
+      #
+      # Bu is eskiden Foundry kurmuyordu ve sorun da cikmiyordu, cunku
+      # `foundry.toml` yoktu: crytic-compile projeyi duz bir solc projesi
+      # sayiyordu. `foundry.toml` eklendikten sonra projeyi Foundry projesi
+      # olarak algilayip `forge config --json` calistirmaya calisiyor ve
+      # su hatayla aninda duşuyor:
+      #
+      #   Cannot execute `forge`, is it installed and in PATH?
+      #   FileNotFoundError: No such file or directory: 'forge'
+      #
+      # Yani Slither bu depoda sozlesmeleri BIR KEZ BILE analiz etmemisti:
+      # once solhint yapilandirma hatasiyla duşuyordu (adim hic calismiyordu),
+      # sonra da forge bulunamadigi icin aninda cokuyordu. `continue-on-error`
+      # bunu gizliyordu.
+      - name: Install Foundry (Slither'in derleyicisi)
+        uses: foundry-rs/foundry-toolchain@v1
 
       - name: Set up Node.js (for solhint)
         uses: actions/setup-node@v4
@@ -287,9 +310,17 @@ jobs:
       - name: Install Slither
         run: pip install slither-analyzer
 
+      # Slither ilk kez GERCEKTEN calisacak. Bulgular henuz triyaj edilmedigi
+      # icin adim simdilik tavsiye niteliginde birakildi — ama artik gercek
+      # cikti uretiyor ve o cikti OKUNMALI.
+      #
+      # Siradaki adim: bulgulari triyaj edip gerekcesiz olanlari duzeltmek,
+      # gerekcelileri `slither.config.json` ile dislamak, ardindan
+      # `continue-on-error` satirini KALDIRMAK. O noktaya kadar bu is
+      # "Slither'dan geciyoruz" demek icin dayanak DEGILDIR.
       - name: Slither static analysis
-        run: slither contracts/ --print human-summary
-        continue-on-error: true   # advisory; does not fail the build
+        run: slither . --print human-summary
+        continue-on-error: true   # bulgular triyaj edilene kadar tavsiye niteliginde
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Job 4 — Repository hygiene & documentation gate
