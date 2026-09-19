@@ -190,9 +190,16 @@ basmaz ve o zaman yorum satırı filtresi tutmaz, koruma sahte hata verir.
 Bu belgedeki her şey çalıştırılarak doğrulandı, **aşağıdakiler hariç**. Bunlar
 "yapıldı" diye sunulmamaktadır.
 
+> **Bu bölüm artık boş.** Belge ilk yazıldığında beş öğe "doğrulanmadı"
+> listesindeydi; hepsi sonradan gerçekten çalıştırıldı. Son kalan fork testi
+> 19 Eylül 2026'da Ethereum mainnet fork'una karşı **4/4 geçti**.
+>
+> Bölüm kayıt olsun diye duruyor: hangi iddiaların ne zaman ve nasıl
+> doğrulandığı izlenebilir kalsın.
+
 | Öğe | Durum | Neden |
 |---|---|---|
-| `EntryPointFork.t.sol` (4 test) | **Hiç koşulmadı** | Gerçek EntryPoint v0.7 fork testi; RPC erişimi yoktu. Test `[SKIP]` raporlar, asla sahte `[PASS]` vermez. |
+| `EntryPointFork.t.sol` (4 test) | ✅ **Çalıştırıldı ve geçti** (19 Eylül 2026) | Ethereum mainnet fork'una karşı 4/4 geçti, 0 atlandı (5,55 sn). `test_fork_entrypoint_baytkodu_mevcut` o adreste gerçekten kod buldu — yani **gerçek EntryPoint v0.7 baytkodu** kullanıldı, mock değil. |
 | `.solhint.json` yapılandırması | ✅ **CI'da doğrulandı** (#9–#11) | Yazıldığında npm erişimi yoktu; koşu #9'da geçti, #11'de Solidity kaynaklı sıfır uyarı. |
 | TruffleHog düzeltmesi | ✅ **CI'da doğrulandı** (#8) | `--fail` tekrarı giderildikten sonra iş yeşil; artık tüm dosya sistemini tarıyor. |
 | Slither | ✅ **CI'da doğrulandı** (#10–#11) | İlk kez gerçek çıktı üretti (0 high, 4 medium). Triyaj edildi, 3 gerçek sorun düzeltildi, #11'de bulgu kalmadı, `continue-on-error` kaldırıldı. Bkz. `Q-Adaptive-Contracts/SLITHER_TRIYAJI.md`. |
@@ -212,15 +219,31 @@ kontrol" ile karşılaşıldı:
 
 Dördü de hiç olmayan bir kontrolden tehlikeliydi, çünkü yanlış güven veriyordu.
 
-### Fork testini çalıştırmak
+### Fork testini tekrarlamak
 
 ```bash
-export ETH_RPC_URL="https://<sağlayıcı>/<anahtar>"
+export ETH_RPC_URL="https://ethereum-rpc.publicnode.com"
 cd Q-Adaptive-Contracts && forge test --match-contract EntryPointForkTest -vv
 ```
 
-Mock EntryPoint E1'i kanıtlıyor, ama **mock yine de bizim yazdığımız bir
-sözleşmedir**. Gerçek baytkoda karşı doğrulama hâlâ açık iştir.
+Ölçülen sonuç:
+
+```
+[PASS] test_fork_entrypoint_baytkodu_mevcut()
+[PASS] test_fork_mevduat_gercek_entrypointten_cekilebiliyor()
+[PASS] test_fork_on_fonlama_gercek_entrypointe_ulasiyor()
+[PASS] test_fork_paymaster_mevduati_gercek_entrypointte()
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 5.55s
+```
+
+**Neden bu önemliydi:** Mock EntryPoint hata E1'i kanıtlıyordu, ama mock yine
+de bizim yazdığımız bir sözleşmeydi. Şimdi aynı iddialar
+`0x0000000071727De22E5E9d8BAf0edAc6f37da032` adresindeki **konuşlanmış gerçek
+baytkoda** karşı sınandı. `gas: 2300` stipend'inin neden her işlemi revert
+ettireceği artık varsayım değil, ölçüm.
+
+RPC yapılandırılmazsa test `[SKIP]` raporlar — asla sahte bir `[PASS]`
+üretmez.
 
 ---
 
@@ -238,7 +261,7 @@ sözleşmedir**. Gerçek baytkoda karşı doğrulama hâlâ açık iştir.
 | **Solidity testleri** | "109 test, 10'u fuzz. Ölçülen kapsam: satır %92–100, dal %79–97." | "Kapsam %100." |
 | **STARK** | "Prototip temkinli **80-bit** ayarında ve bu sayı tek bir sabitten geliyor; README'yi okuyan bir test hizayı koruyor." | "96-bit." · "STARK, ML-DSA doğrulamasını devre içinde ispatlıyor." |
 | **Calldata** | "50 işlemlik partide bir kanıt, işlem başına ML-DSA imzası taşımaya kıyasla ~%98,2 tasarruf. Tanım payload'un içinde." | "ECDSA'dan daha az calldata." (50 ECDSA imzası = 3.250 B, **bir STARK kanıtından küçük**) |
-| **Canlı ağ** | "Mock EntryPoint'e karşı doğrulandı." | "Gerçek EntryPoint'te doğrulandı." |
+| **Canlı ağ** | "Ethereum mainnet fork'unda, `0x0000000071727De22E5E9d8BAf0edAc6f37da032` adresindeki gerçek EntryPoint v0.7 baytkoduna karşı doğrulandı — 4/4 test." | "Mainnet'e konuşlandırıldı." (fork testi ≠ konuşlandırma) |
 | **Genel duruş** | "Kuantum-hazır mimari ve uçtan uca çalışan, testle korunan prototip." | "Konuşlandırılmış kuantum-dayanıklı sistem." |
 
 ---
@@ -299,11 +322,14 @@ olarak böyle: iddialar testlere bağlı, yorumlara değil.
 
 ## 11. Kalan işler
 
+**Denetimden gelen işlerin tamamı kapandı.** Aşağıdakiler yeni işler; hiçbiri
+açık bir bulgu değil.
+
 | Öncelik | İş | Neden |
 |---|---|---|
-| 1 | Gerçek EntryPoint v0.7 ile fork testini çalıştır | Test yazıldı, hiç koşulmadı. "Canlı ağda çalışır" demenin tek yolu. |
-| 2 | `QAdaptiveAccount` dal kapsamını %79,37'den yükselt | İmza kurtarma savunma kolları kapsanmıyor. |
-| 3 | `gas-custom-errors`: `require` string'lerinden custom error'a geç | Gaz tasarrufu; 109 test revert mesajlarını string bekliyor, birlikte güncellenmeli. Açık teknik borç. |
-| 4 | Guardian anahtarını HSM/KMS'e taşı | `attestation.py` anahtarı bellekte tutuyor ve sabit-zamanlı değil — üretim için uygun değil, dosyada yazılı. |
-| 5 | `docs/` altındaki eski raporlarda 96-bit / 16-özellik kalıntılarını tara | README ve kod hizalı; eski PDF/`.md` raporlar hâlâ eski sayıları taşıyor. |
-| 6 | Sunum kapak slaytlarındaki yer tutucu soyadları düzelt | Denetim §10. |
+| 1 | `docs/` altındaki eski raporlarda 96-bit / 16-özellik kalıntılarını tara | README ve kod hizalı; eski PDF/`.md` raporlar hâlâ eski sayıları taşıyor. Jüri elindeki nüshayı okuyor. |
+| 2 | `QAdaptiveAccount` dal kapsamını %79,37'den yükselt | İmza kurtarma savunma kolları kapsanmıyor (bozuk `v`, sonsuzdaki nokta). |
+| 3 | Guardian anahtarını HSM/KMS'e taşı | `attestation.py` anahtarı bellekte tutuyor ve sabit-zamanlı değil — üretim için uygun değil. Sınır dosyanın başında yazılı. |
+| 4 | `gas-custom-errors`: `require` string'lerinden custom error'a geç | Gaz tasarrufu; 109 test revert mesajlarını string bekliyor, birlikte güncellenmeli. Açık teknik borç. |
+| 5 | Sunum kapak slaytlarındaki yer tutucu soyadları düzelt | Denetim §10. |
+| 6 | `ETH_RPC_URL` sırrını depoya ekle | Fork testleri CI'da da gerçeğe karşı koşar. Zorunlu değil — sır yoksa `[SKIP]` raporluyorlar. |

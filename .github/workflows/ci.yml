@@ -177,8 +177,18 @@ jobs:
           fi
           echo "OK: fixture güncel"
 
+      # `ETH_RPC_URL` ortama gecirilir. Deponun Settings > Secrets bolumunde
+      # bu sir TANIMLIYSA `EntryPointFork.t.sol` gercek EntryPoint v0.7
+      # baytkoduna karsi kosar; TANIMLI DEGILSE degisken bos gelir ve o dort
+      # test kendini atlayip [SKIP] raporlar — is yine yesil kalir.
+      #
+      # Yani sir eklemek zorunlu degil, ama eklenirse kapsama gercek bir
+      # katman ekler. Sir olmadan CI'in asla sahte bir [PASS] uretmedigi
+      # testin kendi `vm.skip(true)` mantigiyla garanti altinda.
       - name: Run Foundry tests (fuzz dahil)
         run: forge test -vv
+        env:
+          ETH_RPC_URL: ${{ secrets.ETH_RPC_URL }}
 
       - name: Measure coverage
         run: forge coverage --report summary

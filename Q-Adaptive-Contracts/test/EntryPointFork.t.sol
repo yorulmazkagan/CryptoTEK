@@ -13,26 +13,29 @@ import "./mocks/Mocks.sol";
  * @notice GERÇEK ERC-4337 EntryPoint v0.7 ile fork testi.
  *
  * ╔═══════════════════════════════════════════════════════════════════════════╗
- * ║  BU TEST HENÜZ ÇALIŞTIRILMADI                                             ║
+ * ║  ÇALIŞTIRILDI VE GEÇTİ — 19 Eylül 2026                                    ║
  * ║                                                                           ║
- * ║  Yazıldığı ortamda ağ erişimi yoktu, dolayısıyla aşağıdaki iddiaların     ║
- * ║  hiçbiri gerçek EntryPoint'e karşı DOĞRULANMIŞ DEĞİLDİR. Test, RPC        ║
- * ║  yapılandırılmadığında kendini atlar — sahte bir "geçti" üretmez.         ║
+ * ║  Ethereum mainnet fork'una karşı 4/4 test geçti, 0 atlandı (5.55 s).      ║
+ * ║  Yani aşağıdaki iddialar mock'a değil, GERÇEK EntryPoint v0.7             ║
+ * ║  baytkoduna karşı doğrulanmıştır.                                         ║
  * ║                                                                           ║
- * ║  Çalıştırmak için:                                                        ║
- * ║    export ETH_RPC_URL="https://<saglayici>/<anahtar>"                      ║
+ * ║  Tekrarlamak için:                                                        ║
+ * ║    export ETH_RPC_URL="https://ethereum-rpc.publicnode.com"               ║
  * ║    forge test --match-contract EntryPointForkTest -vv                     ║
+ * ║                                                                           ║
+ * ║  RPC yapılandırılmazsa test kendini atlar ve [SKIP] raporlar —            ║
+ * ║  asla sahte bir [PASS] üretmez.                                           ║
  * ╚═══════════════════════════════════════════════════════════════════════════╝
  *
- * @dev Neden mock yetmiyor:
+ * @dev Neden mock yetmiyordu:
  *      `MockEntryPoint` hata E1'i yakalamak için kasıtlı olarak `receive()`
  *      içinde iki SSTORE yapar ve bu, 2300 gaz stipend'inin neden çalışmadığını
  *      kanıtlamaya yeter. Ama mock yine de BİZİM yazdığımız bir sözleşmedir;
  *      gerçek EntryPoint'in mevduat muhasebesi, nonce yönetimi ve
- *      `validateUserOp` çağrı bağlamı farklı olabilir.
+ *      `validateUserOp` çağrı bağlamı farklı olabilirdi.
  *
- *      Bu dosya o boşluğu kapatmak içindir: aynı iddialar gerçek, konuşlanmış
- *      EntryPoint v0.7 baytkoduna karşı sınanır.
+ *      Bu dosya o boşluğu kapattı: aynı iddialar gerçek, konuşlanmış
+ *      EntryPoint v0.7 baytkoduna karşı sınandı ve geçti.
  */
 contract EntryPointForkTest is Test {
     /// @dev ERC-4337 v0.7 EntryPoint — tüm büyük ağlarda aynı adres.

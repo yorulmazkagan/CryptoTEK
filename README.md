@@ -638,22 +638,38 @@ Of the Solidity tests, 10 are fuzz/invariant tests running 512 cases each.
 > crafting invalid curve points. We state the measured number rather than
 > claiming full coverage.
 
-### The four skipped tests
+### The four fork tests — run against the real EntryPoint
 
-`EntryPointFork.t.sol` contains four tests that run against the **real**
-deployed ERC-4337 EntryPoint v0.7 (`0x0000000071727De22E5E9d8BAf0edAc6f37da032`).
-They are skipped unless an RPC endpoint is configured, and they report as
-`[SKIP]` — never as passing:
+`EntryPointFork.t.sol` contains four tests that exercise the account and
+paymaster against the **real deployed** ERC-4337 EntryPoint v0.7 at
+`0x0000000071727De22E5E9d8BAf0edAc6f37da032`.
+
+They require an RPC endpoint, so they are **skipped in the default suite**
+(reported as `[SKIP]`, never as a false `[PASS]`). Against an Ethereum mainnet
+fork they pass:
 
 ```bash
-export ETH_RPC_URL="https://<provider>/<key>"
+export ETH_RPC_URL="https://ethereum-rpc.publicnode.com"
 forge test --match-contract EntryPointForkTest -vv
 ```
 
-**These have not been run yet.** The mock EntryPoint proves the 2300-gas
-stipend bug (its `receive()` deliberately performs two SSTOREs), but a mock is
-still a contract we wrote. Verification against the real bytecode is
-outstanding work, and we say so rather than implying it is done.
+```
+[PASS] test_fork_entrypoint_baytkodu_mevcut()
+[PASS] test_fork_mevduat_gercek_entrypointten_cekilebiliyor()
+[PASS] test_fork_on_fonlama_gercek_entrypointe_ulasiyor()
+[PASS] test_fork_paymaster_mevduati_gercek_entrypointte()
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 5.55s
+```
+
+**Why this mattered.** The mock EntryPoint demonstrates the 2300-gas stipend
+bug — its `receive()` deliberately performs two SSTOREs, which a 2300-gas
+stipend cannot pay for. But a mock is still a contract *we* wrote. These four
+tests close that gap: the same assertions now hold against bytecode we did not
+author and cannot influence. The claim that `gas: 2300` would revert every
+transaction on a live network is no longer an inference — it is a measurement.
+
+This does **not** mean the system is deployed to mainnet. A fork test reads
+real state; it does not put anything on chain.
 
 ### Cross-layer proof: Python signature → Solidity `ecrecover`
 
