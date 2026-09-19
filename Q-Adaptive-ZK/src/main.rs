@@ -23,8 +23,6 @@
 // =============================================================================
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::fs;
 use std::env;
 
@@ -41,14 +39,16 @@ use winter_verifier::verify;
 
 // Proje modülleri
 mod air;
-mod trace;
+mod armor;
 mod bridge;
+mod hashing;
+mod pipeline;
+mod pqc;
+mod trace;
 
 use air::{get_proof_options, QAdaptiveAir, QAdaptivePublicInputs};
-use trace::{
-    Dilithium5InjectionPayload, MlDsaSecurityLevel,
-    QAdaptiveTrace, TRACE_LENGTH, TRACE_WIDTH, ML_DSA_Q,
-};
+use pipeline::{RunOutcome, RunRequest};
+use trace::{MlDsaSecurityLevel, QAdaptiveTrace, TRACE_LENGTH, TRACE_WIDTH};
 use bridge::export_proof_payload;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,51 +93,21 @@ const THIN_SEP  : &str = "------------------------------------------------------
 /// # Returns
 /// 32-byte kriptografik seed [u8; 32].
 pub fn generate_rho_prime_from_entropy(ai_risk_score: f64, timestamp_ns: u64) -> [u8; 32] {
-    // OS entropi simülasyonu: birden fazla kaynaktan toplanan durum
-    // Üretimde: use rand::rngs::OsRng; OsRng.fill_bytes(&mut os_entropy);
-    let os_entropy_seed: u64 = {
-        let mut h = DefaultHasher::new();
-        timestamp_ns.hash(&mut h);
-        ai_risk_score.to_bits().hash(&mut h);
-        // Process ID (platform bağımsız ek entropi kaynağı)
-        std::process::id().hash(&mut h);
-        h.finish()
-    };
-
-    // 32-byte seed üretimi: tüm kaynakları BLAKE3 ile birleştir
-    // Üretimde: blake3::hash(birleştirilmiş_veri).into()
-    // Simülasyon: 4 × 8-byte blok olarak hash değerleri
-    let mut seed = [0u8; 32];
-
-    // Blok 0: timestamp + risk score karması
-    let mut h0 = DefaultHasher::new();
-    timestamp_ns.hash(&mut h0);
-    ai_risk_score.to_bits().hash(&mut h0);
-    let b0 = h0.finish().to_le_bytes();
-    seed[0..8].copy_from_slice(&b0);
-
-    // Blok 1: os_entropy + risk skoru karması
-    let mut h1 = DefaultHasher::new();
-    os_entropy_seed.hash(&mut h1);
-    (ai_risk_score as u64).hash(&mut h1);
-    let b1 = h1.finish().to_le_bytes();
-    seed[8..16].copy_from_slice(&b1);
-
-    // Blok 2: timestamp + os_entropy çapraz karması
-    let mut h2 = DefaultHasher::new();
-    (timestamp_ns ^ os_entropy_seed).hash(&mut h2);
-    let b2 = h2.finish().to_le_bytes();
-    seed[16..24].copy_from_slice(&b2);
-
-    // Blok 3: tüm önceki blokların üst karma (bütünlük zinciri)
-    let mut h3 = DefaultHasher::new();
-    b0.hash(&mut h3);
-    b1.hash(&mut h3);
-    b2.hash(&mut h3);
-    let b3 = h3.finish().to_le_bytes();
-    seed[24..32].copy_from_slice(&b3);
-
-    seed
+    // Türetmenin tamamı `hashing::derive_rho_prime`e devredildi.
+    //
+    // Buradaki eski uygulama dört ayrı `DefaultHasher` (SipHash) bloğuyla
+    // seed üretiyordu ve aralarına `std::process::id()` karıştırıyordu.
+    // İki ayrı sorun vardı:
+    //
+    //   • SipHash kriptografik değil ve Rust sürümleri arasında çıktı
+    //     kararlılığı GARANTİ EDİLMİYOR — yani aynı girdi başka bir
+    //     derlemede başka bir ρ' üretebilirdi.
+    //   • `process::id()` her koşuda değiştiği için kanıt YENİDEN
+    //     ÜRETİLEBİLİR değildi; jüri aynı sonucu alamazdı.
+    //
+    // Taze entropi artık sessizce karıştırılmıyor: isteyen `--fresh-entropy`
+    // ile açıkça veriyor ve bu payload'da işaretleniyor.
+    hashing::derive_rho_prime(ai_risk_score, timestamp_ns, &[], None)
 }
 
 /// Hex string'den 32-byte rho_prime seed'i ayrıştırır.
@@ -263,111 +233,91 @@ fn print_banner() {
     println!();
 }
 
-fn simulate_ai_trigger(ai_risk_score: f64) -> (f64, String) {
+/// AI sinyalini ve zırh kararını ekrana basar.
+///
+/// **Burada artık karar VERİLMİYOR** — karar `armor::decide`'da verilir ve
+/// bu fonksiyon yalnızca sonucu gösterir.
+///
+/// Eski hâli kararı kendisi veriyordu: `if ai_risk_score > 90.0`. Bu sabit,
+/// Python tarafındaki τ(t) ile uyuşmuyordu; risk = 82 / τ = 75 durumunda iki
+/// katman zıt kararlar üretiyordu (bkz. src/armor.rs başlığı).
+fn print_ai_signal(request: &RunRequest, decision: &armor::ArmorDecision) {
     println!("[ADIM 1] AI Guardian Sinyali İşleniyor...");
     println!("{THIN_SEP}");
 
-    println!("  Analiz Edilen Anomali Skoru : {:.2}", ai_risk_score);
+    println!("  Analiz Edilen Anomali Skoru : {:.2}", request.risk_score);
+    println!("  Dinamik Eşik τ(t)           : {:.2}", request.tau);
+    println!("  Taban Zırh                  : {}", request.baseline.name());
+    println!("  Sistem Durumu               : {}", decision.status);
 
-    let status = if ai_risk_score > 90.0 {
-        "PANIC_MODE_ACTIVATED"
-    } else {
-        "NORMAL"
-    };
-
-    println!("  Sistem Durumu               : {}", status);
-
-    if status == "PANIC_MODE_ACTIVATED" {
+    if decision.proof_required {
+        println!("  Eşik Aşımı                  : {:.2} puan", decision.asim);
+        println!("  Seçilen Zırh                : {}", decision.level.name());
         println!("  ⚠️  TEHDİT TESPİT EDİLDİ! Post-Kuantum Kalkanı Aktive Ediliyor...");
     }
     println!();
-
-    (ai_risk_score, status.to_string())
 }
 
-fn derive_rho_prime(risk_score: f64) -> [u8; 32] {
-    // Güvenlik: SystemTime::now() teorik olarak UNIX_EPOCH'tan önce dönebilir
-    // (sistem saati yanlış ayarlı örta mlarda). expect() yerine unwrap_or kullan.
-    let timestamp_ns = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_else(|_| {
-            eprintln!("[WARN][Q-ZK] Sistem saati UNIX epoch'tan önce görünüyor — 0 kullanılıyor.");
-            std::time::Duration::ZERO
-        })
-        .as_nanos() as u64;
-
-    let rho_prime = generate_rho_prime_from_entropy(risk_score, timestamp_ns);
-
-    println!("  Rho-Prime Seed (ρ') Türetildi:");
-    println!("  ρ' = {}...", hex::encode(&rho_prime[..16]));
-    println!("  (Tam 32-byte seed JSON export'a yazıldı)");
-    println!();
-
-    rho_prime
-}
-
-/// Parameterize edilmiş ML-DSA kafes konfigürasyonuyla TraceTable oluşturur.
+/// Kafes matrisini, kısa tohumları ve gerçek ML-DSA imzasını ekrana basar,
+/// ardından kanıtlanacak Winterfell tablosunu döndürür.
 ///
-/// Önceki: build_trace_table() — sabit seed (42, 13, 7).
-/// Yeni  : build_parameterized_trace(config, rho) — tam rho-prime tabanlı.
-fn build_parameterized_trace(
-    rho_prime    : [u8; 32],
-    level        : MlDsaSecurityLevel,
-    seed_s1      : u128,
-    seed_s2      : u128,
-) -> (TraceTable<BaseElement>, [u8; 32]) {
+/// **Tablo burada YENİDEN HESAPLANMAZ.** `pipeline::trace_table_from`
+/// ekranda gösterilen `QAdaptiveTrace`'i hücre hücre kopyalar.
+///
+/// Eski `build_parameterized_trace` fonksiyonu `trace.fill(...)` içinde kendi
+/// geçiş mantığını baştan yazıyordu; `QAdaptiveTrace` ise u128 + `% q`
+/// kullanıyordu. Sahnede jüriye gösterilen tablo, STARK'ın kanıtladığı tablo
+/// değildi (hata E2). Kopyalama bu ayrışmayı yapısal olarak imkânsız kılar.
+fn build_trace_for_display_and_proof(outcome: &RunOutcome) -> TraceTable<BaseElement> {
     println!("[ADIM 2] Parameterize ML-DSA Kafes Matrisi Enjekte Ediliyor...");
     println!("{THIN_SEP}");
 
-    let payload = Dilithium5InjectionPayload::new_with_seed(
-        rho_prime, level, seed_s1, seed_s2,
-    );
+    let payload = outcome
+        .payload
+        .as_ref()
+        .expect("kanıt gerekli koşuda payload üretilmiş olmalı");
 
     println!("  Güvenlik Seviyesi           : {}", payload.config.level.name());
-    println!("  Kafes Boyutu                : {}×{} = {} eleman",
-        payload.config.k, payload.config.ell, payload.config.matrix_elements());
-    println!("  rho_prime (ilk 8 byte)      : {}", hex::encode(&rho_prime[..8]));
-    println!("  Kafes Taahhüdü (A_commit_0) : {}",
-        payload.matrix_a[0][0]);
+    println!(
+        "  Kafes Boyutu                : {}×{} = {} eleman",
+        payload.config.k, payload.config.ell, payload.config.matrix_elements()
+    );
+    println!("  rho_prime (ilk 8 byte)      : {}", hex::encode(&outcome.rho_prime[..8]));
+    println!("  Kafes Taahhüdü (A_commit_0) : {}", payload.matrix_a[0][0]);
     println!("  İz Tablosu                  : {} Sütun, {} Satır", TRACE_WIDTH, TRACE_LENGTH);
-
-    // QAdaptiveTrace görselleştirici
-    let q_trace = QAdaptiveTrace::new(&payload, TRACE_LENGTH);
-    q_trace.print_table();
-
-    // Winterfell TraceTable'a dönüştür
-    let mut trace = TraceTable::new(TRACE_WIDTH, TRACE_LENGTH);
-    trace.fill(
-        |state| {
-            // Başlangıç durumu: ilk adımın kafes taahhüdü ve s değerleri
-            state[0] = BaseElement::new(payload.matrix_a[0][0] % ML_DSA_Q);
-            state[1] = BaseElement::new(payload.seed_s1 % ML_DSA_Q);
-            state[2] = BaseElement::new(payload.seed_s2 % ML_DSA_Q);
-            state[3] = state[0] * state[1] + state[2];
-        },
-        |step, state| {
-            // Adım geçişi: köşegen matris taahhüdü + s evrimleri
-            let next_step = step + 1;
-            let row_idx   = next_step % payload.config.k;
-            let col_idx   = next_step % payload.config.ell;
-            let a_next    = BaseElement::new(payload.matrix_a[row_idx][col_idx] % ML_DSA_Q);
-
-            state[0] = a_next;
-            state[1] = state[1] + BaseElement::new(2);
-            state[2] = state[2] + BaseElement::new(3);
-            state[3] = state[0] * state[1] + state[2];
-        },
+    println!(
+        "  Koşu Türü                   : {}",
+        if outcome.deterministic { "deterministik" } else { "taze entropili" }
     );
 
+    if let Some(kayit) = &outcome.pqc {
+        println!();
+        println!("  ── Gerçek ML-DSA İmzası (fips204) ──");
+        println!("  Açık Anahtar                : {} bayt", kayit.public_key_len);
+        println!("  Gizli Anahtar               : {} bayt", kayit.secret_key_len);
+        println!("  İmza                        : {} bayt", kayit.signature_len);
+        println!("  İmza (ilk 16 bayt)          : {}...", kayit.signature_prefix_hex);
+        println!("  Doğrulama                   : {}", if kayit.verified { "✅ GEÇTİ" } else { "❌ KALDI" });
+    }
+
     println!();
-    (trace, rho_prime)
+
+    // Gösterilen tablo ve kanıtlanan tablo — tek kaynak.
+    let q_trace = QAdaptiveTrace::new(payload, TRACE_LENGTH);
+    q_trace.print_table();
+    println!();
+
+    pipeline::trace_table_from(&q_trace)
 }
 
 /// Winterfell STARK kanıtı üretir.
 ///
 /// # Returns
 /// `Ok(Proof)` başarılıysa, `Err(String)` kısıt ihlali veya prover hatası.
-fn generate_proof(trace: TraceTable<BaseElement>, options: ProofOptions) -> Result<Proof, String> {
+fn generate_proof(
+    trace  : TraceTable<BaseElement>,
+    options: ProofOptions,
+) -> Result<(Proof, f64), String> {
     println!("[ADIM 3] STARK Kanıtı Üretiliyor (Prover)...");
     println!("{THIN_SEP}");
 
@@ -376,20 +326,24 @@ fn generate_proof(trace: TraceTable<BaseElement>, options: ProofOptions) -> Resu
     // Güvenlik: .expect() kaldırıldı. Prover hatası (kısıt ihlali vb.) sonaç
     // program sonlanmasına değil, çağıran koda iletilen Err'ye dönüştürülür.
     let proof   = prover.prove(trace).map_err(|e| format!("STARK prover hatası: {:?}", e))?;
-    let elapsed_ms  = t_start.elapsed().as_millis();
+    // Süre payload'a yazılır; raporlarda sabitlenmiş "18.52 ms" değeri tek bir
+    // makinedeki tek bir koşudan geliyordu (bkz. bridge::StarkMetrics).
+    let elapsed_ms = t_start.elapsed().as_secs_f64() * 1000.0;
 
-    println!("  ✅ Prover Çalışması Tamamlandı ({} ms)", elapsed_ms);
+    println!("  ✅ Prover Çalışması Tamamlandı ({:.2} ms)", elapsed_ms);
     println!("  Kanıt Ham Boyutu            : {:.2} KB", proof.to_bytes().len() as f64 / 1024.0);
     println!();
 
-    Ok(proof)
+    Ok((proof, elapsed_ms))
 }
 
 fn verify_proof(proof: Proof, pub_inputs: QAdaptivePublicInputs) -> Proof {
     println!("[ADIM 4] Yerel Doğrulama (Verifier)...");
     println!("{THIN_SEP}");
 
-    let acceptable = AcceptableOptions::MinConjecturedSecurity(80);
+    // Güvenlik seviyesi tek yerden gelir (air::STARK_SECURITY_BITS).
+    // Buraya elle "80" yazmak, README'nin "96" demesiyle aynı sınıf hatadır.
+    let acceptable = AcceptableOptions::MinConjecturedSecurity(air::STARK_SECURITY_BITS);
     let t_start  = Instant::now();
 
     let result = verify::<
@@ -413,20 +367,67 @@ fn verify_proof(proof: Proof, pub_inputs: QAdaptivePublicInputs) -> Proof {
 }
 
 fn export_payload(
-    status     : &str,
-    risk_score : f64,
-    rho_prime  : &[u8; 32],
+    request    : &RunRequest,
+    outcome    : &RunOutcome,
     proof      : Proof,
     pub_inputs : QAdaptivePublicInputs,
-    security_level: &str,
+    prover_ms  : f64,
 ) {
     println!("[ADIM 5] Solidity Akıllı Sözleşme Payload'u Oluşturuluyor...");
     println!("{THIN_SEP}");
 
     let filepath    = "proof_payload.json";
     let proof_bytes = proof.to_bytes();
+    let status      = outcome.decision.status;
+    let risk_score  = request.risk_score;
+    let rho_prime   = &outcome.rho_prime;
+    let security_level = outcome.decision.level.name();
 
-    match export_proof_payload(status, risk_score, rho_prime, security_level, &proof_bytes, &pub_inputs, filepath) {
+    // Ölçümler — hepsi bu koşudan, hiçbiri elle yazılmamış.
+    let pqc_ozet = outcome.pqc.as_ref().map(|k| bridge::PqcSummary {
+        tier                     : k.level.name().to_string(),
+        public_key_bytes         : k.public_key_len,
+        secret_key_bytes         : k.secret_key_len,
+        signature_bytes          : k.signature_len,
+        public_key_commitment_hex: hex::encode(k.public_key_commitment),
+        signature_prefix_hex     : k.signature_prefix_hex.clone(),
+        signature_verified       : k.verified,
+    });
+
+    // Calldata tasarrufu, bu kademedeki GERÇEK imza boyutundan hesaplanır.
+    let calldata = outcome.pqc.as_ref().map(|k| {
+        bridge::CalldataRecord::compute(
+            bridge::CalldataRecord::DEFAULT_BATCH_SIZE,
+            k.signature_len,
+            proof_bytes.len(),
+        )
+    });
+
+    let extras = bridge::PayloadExtras {
+        tau          : request.tau,
+        run_id       : request.run_id.clone(),
+        deterministic: outcome.deterministic,
+        stark        : bridge::StarkMetrics {
+            proof_bytes              : proof_bytes.len(),
+            prover_ms,
+            conjectured_security_bits: air::STARK_SECURITY_BITS,
+            field                    : "f128".to_string(),
+            num_queries              : air::FRI_NUM_QUERIES,
+            blowup_factor            : air::FRI_BLOWUP_FACTOR,
+        },
+        pqc      : pqc_ozet,
+        calldata,
+    };
+
+    if let Some(c) = &extras.calldata {
+        println!("  Calldata Tasarrufu          : %{:.2}", c.savings_pct);
+        println!("  Formül                      : {}", c.formula);
+        println!("  ECDSA partisi ({} imza)     : {} bayt{}",
+            c.batch_size, c.ecdsa_batch_bytes,
+            if c.beats_ecdsa { "" } else { "  ← ECDSA calldata'da daha küçük" });
+    }
+
+    match export_proof_payload(status, risk_score, rho_prime, security_level, &proof_bytes, &pub_inputs, extras, filepath) {
         Ok(_) => {
             // Güvenlik: fs::metadata().unwrap() panic'i kaldırıldı.
             // Dosya boyutu alınamazsa (yarış koşulu, izin sorunu) uyarı basılır.
@@ -472,70 +473,131 @@ fn print_summary(elapsed_total_ms: u128, risk_score: f64, level: &str, rho_prime
 // CLI Argüman Ayrıştırma
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct CliArgs {
-    /// 32-byte rho_prime seed (64 hex karakteri) — API'den geçirilen rotasyon seed'i.
-    /// None ise generate_rho_prime_from_entropy() ile üretilir.
-    rho_prime_override : Option<[u8; 32]>,
-    /// AI risk skoru (0.0 - 100.0). Varsayılan: 98.52 (test senaryosu).
-    ai_risk_score      : f64,
-    /// ML-DSA güvenlik seviyesi. Varsayılan: Level87 (panik modu).
-    security_level     : MlDsaSecurityLevel,
+/// Prover'ın kabul ettiği argümanlar.
+///
+/// API katmanı bunların hepsini her koşuda geçirir. Eskiden API prover'ı
+/// `create_subprocess_exec(binary)` ile **hiç argüman vermeden** çağırıyordu;
+/// prover da kendi varsayılanlarıyla (risk 98.52, zırh ML-DSA-87) koşuyordu.
+/// Yani kafes her koşuda değişiyordu ama AI'ın kararına göre değil.
+const KULLANIM: &str = "\
+Kullanım: q-adaptive-zk [SEÇENEKLER]
+
+Seçenekler:
+  --risk-score <f64>     AI'ın ürettiği risk yüzdesi (0–100)
+  --tau <f64>            Dinamik eşik τ(t)
+  --level <44|65|87>     Zırh kademesini elle sabitle (τ kararını geçersiz kılar)
+  --baseline <44|65|87>  Hesabın taban zırhı; kademe bunun altına inemez
+  --user-op-hash <hex>   Kanıtın bağlanacağı UserOperation özeti
+  --epoch-ns <u64>       Dönem damgası (nanosaniye)
+  --run-id <metin>       Koşu kimliği (loglar ve payload için)
+  --rho-prime <64-hex>   ρ''yü doğrudan ver (türetmeyi atlar)
+  --fresh-entropy <hex>  Taze entropi ekle — koşu deterministik OLMAZ
+  --help                 Bu metni göster
+";
+
+/// Ayrıştırma sonucu — hata durumunda çağıran çıkış kodu 1 ile durur.
+fn parse_cli() -> Result<(RunRequest, Option<MlDsaSecurityLevel>), String> {
+    let args: Vec<String> = env::args().collect();
+    let mut request = RunRequest::elle_kosu();
+    let mut level_override: Option<MlDsaSecurityLevel> = None;
+
+    /// Bir seçeneğin değerini alır; eksikse açık hata döner.
+    fn deger<'a>(args: &'a [String], i: usize, ad: &str) -> Result<&'a str, String> {
+        args.get(i + 1)
+            .map(|s| s.as_str())
+            .ok_or_else(|| format!("{} bir değer bekliyor", ad))
+    }
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--help" | "-h" => {
+                println!("{}", KULLANIM);
+                std::process::exit(0);
+            }
+            "--risk-score" => {
+                let ham = deger(&args, i, "--risk-score")?;
+                // Eskiden ayrıştırma hatası yalnızca uyarı basıp varsayılana
+                // düşüyordu — sessiz yapılandırma hatası. Artık durduruyor.
+                request.risk_score = ham
+                    .parse::<f64>()
+                    .map_err(|_| format!("--risk-score sayı olmalı, '{}' alındı", ham))?;
+                i += 1;
+            }
+            "--tau" => {
+                let ham = deger(&args, i, "--tau")?;
+                request.tau = ham
+                    .parse::<f64>()
+                    .map_err(|_| format!("--tau sayı olmalı, '{}' alındı", ham))?;
+                i += 1;
+            }
+            "--level" => {
+                // HATA E5: eski desen `"87" | _ => Level87` geçersiz girdiyi
+                // sessizce en yüksek kademeye düşürüyordu.
+                level_override = Some(MlDsaSecurityLevel::parse(deger(&args, i, "--level")?)?);
+                i += 1;
+            }
+            "--baseline" => {
+                request.baseline = MlDsaSecurityLevel::parse(deger(&args, i, "--baseline")?)?;
+                i += 1;
+            }
+            "--user-op-hash" => {
+                request.user_op_hash = deger(&args, i, "--user-op-hash")?.to_string();
+                i += 1;
+            }
+            "--epoch-ns" => {
+                let ham = deger(&args, i, "--epoch-ns")?;
+                request.epoch_ns = ham
+                    .parse::<u64>()
+                    .map_err(|_| format!("--epoch-ns tamsayı olmalı, '{}' alındı", ham))?;
+                i += 1;
+            }
+            "--run-id" => {
+                request.run_id = deger(&args, i, "--run-id")?.to_string();
+                i += 1;
+            }
+            "--rho-prime" => {
+                request.rho_override = Some(parse_rho_prime_hex(deger(&args, i, "--rho-prime")?)?);
+                i += 1;
+            }
+            "--fresh-entropy" => {
+                request.fresh_entropy =
+                    Some(parse_rho_prime_hex(deger(&args, i, "--fresh-entropy")?)?);
+                i += 1;
+            }
+            bilinmeyen => {
+                return Err(format!(
+                    "Bilinmeyen argüman: '{}'\n\n{}",
+                    bilinmeyen, KULLANIM
+                ));
+            }
+        }
+        i += 1;
+    }
+
+    // Dönem damgası verilmediyse sistem saatinden al — ama bunu sessizce
+    // yapmak determinizmi bozar, o yüzden loga yazılıyor.
+    if request.epoch_ns == 0 {
+        request.epoch_ns = simdi_ns();
+        eprintln!(
+            "[WARN][Q-ZK] --epoch-ns verilmedi, sistem saati kullanıldı ({}). \
+             Tekrarlanabilir koşu için bu değeri açıkça geçirin.",
+            request.epoch_ns
+        );
+    }
+
+    Ok((request, level_override))
 }
 
-
-impl CliArgs {
-    fn parse() -> Self {
-        let args: Vec<String> = env::args().collect();
-        let mut rho_prime_override = None;
-        let mut ai_risk_score      = 98.52_f64;
-        let mut security_level     = MlDsaSecurityLevel::Level87;
-
-        let mut i = 1;
-        while i < args.len() {
-            match args[i].as_str() {
-                "--rho-prime" => {
-                    if i + 1 < args.len() {
-                        match parse_rho_prime_hex(&args[i + 1]) {
-                            Ok(seed) => {
-                                rho_prime_override = Some(seed);
-                                println!("  CLI: rho_prime override alındı: {}...", &args[i + 1][..16]);
-                            },
-                            Err(e) => {
-                                eprintln!("Hata: --rho-prime argümanı geçersiz: {}", e);
-                                std::process::exit(1);
-                            }
-                        }
-                        i += 1;
-                    }
-                },
-                "--risk-score" => {
-                    if i + 1 < args.len() {
-                        match args[i + 1].parse::<f64>() {
-                            Ok(v)  => ai_risk_score = v,
-                            Err(_) => {
-                                eprintln!("[WARN][Q-ZK] --risk-score ayrıştırılamadı, varsayılan 98.52 kullanılıyor.");
-                            }
-                        }
-                        i += 1;
-                    }
-                },
-                "--level" => {
-                    if i + 1 < args.len() {
-                        security_level = match args[i + 1].as_str() {
-                            "44" => MlDsaSecurityLevel::Level44,
-                            "65" => MlDsaSecurityLevel::Level65,
-                            "87" | _ => MlDsaSecurityLevel::Level87,
-                        };
-                        i += 1;
-                    }
-                },
-                _ => {}
-            }
-            i += 1;
-        }
-
-        Self { rho_prime_override, ai_risk_score, security_level }
-    }
+/// Şu anki zamanı nanosaniye olarak verir.
+fn simdi_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| {
+            eprintln!("[WARN][Q-ZK] Sistem saati UNIX epoch'tan önce görünüyor — 0 kullanılıyor.");
+            std::time::Duration::ZERO
+        })
+        .as_nanos() as u64
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -550,93 +612,86 @@ fn main() {
 
     print_banner();
 
-    // CLI argümanlarını ayrıştır
-    let cli = CliArgs::parse();
+    // CLI argümanlarını ayrıştır. Geçersiz argüman artık sessizce
+    // varsayılana düşmüyor — çıkış kodu 1 ile duruyoruz (hata E5).
+    let (mut request, level_override) = match parse_cli() {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[ERROR][Q-ZK] {}", e);
+            std::process::exit(1);
+        }
+    };
 
-    // Adım 1: AI Risk Simülasyonu
-    let (risk_score, status) = simulate_ai_trigger(cli.ai_risk_score);
+    // `--level` verilmişse taban kademeyi oraya çekeriz; tek yönlü tırmanma
+    // kuralı gereği armor::decide sonucu bunun altına düşemez.
+    if let Some(level) = level_override {
+        request.baseline = level;
+    }
 
-    if status == "PANIC_MODE_ACTIVATED" {
-        // Adım 2a: rho_prime belirleme
-        //   CLI'dan geçirilmişse (API rotasyon tetikleyicisi): override kullan.
-        //   Geçirilmemişse: AI entropisi + timestamp'ten yeni seed üret.
-        let rho_prime = match cli.rho_prime_override {
-            Some(seed) => {
-                println!("[ADIM 2a] API'den Gelen rho_prime Kullanılıyor...");
-                println!("{THIN_SEP}");
-                println!("  ρ' = {}...", hex::encode(&seed[..16]));
-                println!();
-                seed
-            },
-            None => {
-                println!("[ADIM 2a] Yeni rho_prime Seed'i Türetiliyor...");
-                println!("{THIN_SEP}");
-                derive_rho_prime(risk_score)
-            },
-        };
+    // Adım 1: Zırh kararı — TEK kural, τ köprüsü üzerinden.
+    let outcome = match pipeline::run(&request) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("[ERROR][Q-ZK] Kriptografik katman hatası: {}", e);
+            std::process::exit(2);
+        }
+    };
 
-        let level_name = cli.security_level.name();
+    print_ai_signal(&request, &outcome.decision);
 
-        // Adım 2b: Parameterize kafes iz tablosu oluştur
-        // Güvenlik: .try_into().unwrap() kaldırıldı — sabit boyutlu dizi kopyası kullanılır.
-        // rho_prime garantili [u8; 32] olduğundan bu dilimler daima 16 bayttır.
-        let mut s1_bytes = [0u8; 16];
-        let mut s2_bytes = [0u8; 16];
-        s1_bytes.copy_from_slice(&rho_prime[0..16]);
-        s2_bytes.copy_from_slice(&rho_prime[16..32]);
-        let seed_s1 = u128::from_le_bytes(s1_bytes) % ML_DSA_Q;
-        let seed_s2 = u128::from_le_bytes(s2_bytes) % ML_DSA_Q;
-
-        let (trace, rho_used) = build_parameterized_trace(
-            rho_prime,
-            cli.security_level,
-            seed_s1,
-            seed_s2,
-        );
-
-        // Genel girdileri çıkar
-        let last_step = trace.length() - 1;
-        let pub_inputs = QAdaptivePublicInputs {
-            start_state: [
-                trace.get(0, 0), trace.get(1, 0),
-                trace.get(2, 0), trace.get(3, 0),
-            ],
-            final_state: [
-                trace.get(0, last_step), trace.get(1, last_step),
-                trace.get(2, last_step), trace.get(3, last_step),
-            ],
-        };
-        let pub_inputs_verify = pub_inputs.clone();
-        let pub_inputs_export = pub_inputs.clone();
-
-        let options = get_proof_options();
-
-        // Adım 3: STARK Kanıtı Üret (Result propagasyon — program crash yok)
-        let proof = match generate_proof(trace, options) {
-            Ok(p)  => p,
-            Err(e) => {
-                eprintln!("[ERROR][Q-ZK] STARK kanıt üretimi başarısız: {}", e);
-                eprintln!("[ERROR][Q-ZK] Pipeline durduruldu. proof_payload.json güncellenmedi.");
-                std::process::exit(2);
-            }
-        };
-
-        // Adım 4: Doğrula
-        let verified_proof = verify_proof(proof, pub_inputs_verify);
-
-        // Adım 5: Köprü (JSON Export — rho_prime_hex dahil)
-        export_payload(&status, risk_score, &rho_used, verified_proof, pub_inputs_export, level_name);
-
-        let total_ms = t_total.elapsed().as_millis();
-        print_summary(total_ms, risk_score, level_name, &rho_used);
-    } else {
+    if !outcome.decision.proof_required {
         println!("  Sistem normal modda. ZK kanıt üretimi tetiklenmedi.");
+        println!();
+        println!("  NOT: Bu koşuda kanıt ÜRETİLMEDİ. Çağıran taraf diskteki");
+        println!("       eski proof_payload.json'ı taze bir kanıt gibi sunmamalıdır.");
         println!();
         let total_ms = t_total.elapsed().as_millis();
         println!("{SEPARATOR}");
         println!("  Q-ADAPTIVE ZK GUARD — Normal Mod Tamamlandı ({} ms)", total_ms);
         println!("{SEPARATOR}");
+        return;
     }
+
+    let level_name = outcome.decision.level.name();
+
+    // Adım 2: Kafes + gerçek ML-DSA imzası + iz tablosu (tek kaynak).
+    let trace = build_trace_for_display_and_proof(&outcome);
+
+    // Genel girdileri çıkar
+    let last_step = trace.length() - 1;
+    let pub_inputs = QAdaptivePublicInputs {
+        start_state: [
+            trace.get(0, 0), trace.get(1, 0),
+            trace.get(2, 0), trace.get(3, 0),
+        ],
+        final_state: [
+            trace.get(0, last_step), trace.get(1, last_step),
+            trace.get(2, last_step), trace.get(3, last_step),
+        ],
+    };
+    let pub_inputs_verify = pub_inputs.clone();
+    let pub_inputs_export = pub_inputs.clone();
+
+    let options = get_proof_options();
+
+    // Adım 3: STARK Kanıtı Üret (Result propagasyon — program crash yok)
+    let (proof, prover_ms) = match generate_proof(trace, options) {
+        Ok(p)  => p,
+        Err(e) => {
+            eprintln!("[ERROR][Q-ZK] STARK kanıt üretimi başarısız: {}", e);
+            eprintln!("[ERROR][Q-ZK] Pipeline durduruldu. proof_payload.json güncellenmedi.");
+            std::process::exit(2);
+        }
+    };
+
+    // Adım 4: Doğrula
+    let verified_proof = verify_proof(proof, pub_inputs_verify);
+
+    // Adım 5: Köprü (JSON Export — ölçümler dahil)
+    export_payload(&request, &outcome, verified_proof, pub_inputs_export, prover_ms);
+
+    let total_ms = t_total.elapsed().as_millis();
+    print_summary(total_ms, request.risk_score, level_name, &outcome.rho_prime);
 }
 
 
@@ -658,12 +713,81 @@ mod tests {
         assert_ne!(seed1, seed2, "Zaman farkı seed'i değiştirmeli");
         assert_ne!(seed1, seed3, "Risk skoru farkı seed'i değiştirmeli");
 
-        // Aynı girişler → aynı seed (deterministik)
+        // BULGU 11 REGRESYONU — aynı giriş, birebir aynı seed.
+        //
+        // Eski not burada şöyle diyordu: "Gerçek implementation'da process ID
+        // kullanıldığından tam deterministik değil." Bu, kanıtın yeniden
+        // üretilemez olduğunun kabulüydü. Artık `process::id()` yok ve
+        // aşağıdaki eşitlik testi o davranış geri gelirse kırılır.
         let seed1b = generate_rho_prime_from_entropy(98.52, 1_000_000_000);
-        // Not: Gerçek implementation'da process ID kullanıldığından tam deterministik değil.
-        // Üretimde OsRng kullanımı gerektirir. Test amacıyla: seed1 geçerli bir dizi mi?
-        assert_eq!(seed1b.len(), 32);
+        assert_eq!(
+            seed1, seed1b,
+            "Aynı girdi aynı ρ''yü vermeli — süreç kimliği karışmış olabilir"
+        );
         assert!(seed1b != [0u8; 32], "Seed sıfır dizisi olmamalı");
+    }
+
+    /// BULGU 9 REGRESYONU — ilan edilen güvenlik seviyesi GERÇEKTEN uygulanıyor.
+    ///
+    /// Bu test sayıyı yorumdan değil, kanıtın kendisinden alır:
+    ///   • `STARK_SECURITY_BITS` seviyesinde doğrulama GEÇMELİ,
+    ///   • daha yüksek bir seviyede doğrulama KALMALI.
+    ///
+    /// Böylece sabit gerçekte elde edilen seviyeden yüksek yazılırsa
+    /// (README'nin "96" demesi gibi) test kırılır.
+    #[test]
+    fn test_guvenlik_biti_gercekten_uygulaniyor() {
+        let istek = RunRequest {
+            risk_score   : 95.0,
+            tau          : 75.0,
+            baseline     : MlDsaSecurityLevel::Level44,
+            user_op_hash : "0xguvenlik".to_string(),
+            epoch_ns     : 7_000_000_000,
+            run_id       : "guvenlik".to_string(),
+            fresh_entropy: None,
+            rho_override : None,
+        };
+
+        let outcome = pipeline::run(&istek).unwrap();
+        let trace   = pipeline::trace_table_for(&outcome).unwrap();
+
+        let last_step  = trace.length() - 1;
+        let pub_inputs = QAdaptivePublicInputs {
+            start_state: [
+                trace.get(0, 0), trace.get(1, 0),
+                trace.get(2, 0), trace.get(3, 0),
+            ],
+            final_state: [
+                trace.get(0, last_step), trace.get(1, last_step),
+                trace.get(2, last_step), trace.get(3, last_step),
+            ],
+        };
+
+        let prover = QAdaptiveProver::new(get_proof_options());
+        let proof  = prover.prove(trace).unwrap();
+
+        type H = Blake3_256<BaseElement>;
+
+        // İlan edilen seviyede geçmeli.
+        let ilan_edilen = AcceptableOptions::MinConjecturedSecurity(air::STARK_SECURITY_BITS);
+        assert!(
+            winter_verifier::verify::<QAdaptiveAir, H, DefaultRandomCoin<H>, MerkleTree<H>>(
+                proof.clone(), pub_inputs.clone(), &ilan_edilen
+            ).is_ok(),
+            "Kanıt ilan edilen {} bit seviyesinde doğrulanamadı",
+            air::STARK_SECURITY_BITS
+        );
+
+        // İlan edilenin üstünde KALMALI — aksi hâlde sabit gereğinden düşük.
+        let cok_yuksek =
+            AcceptableOptions::MinConjecturedSecurity(air::STARK_SECURITY_BITS + 40);
+        assert!(
+            winter_verifier::verify::<QAdaptiveAir, H, DefaultRandomCoin<H>, MerkleTree<H>>(
+                proof, pub_inputs, &cok_yuksek
+            ).is_err(),
+            "Kanıt {} bit seviyesinde de geçti — STARK_SECURITY_BITS düşük yazılmış olabilir",
+            air::STARK_SECURITY_BITS + 40
+        );
     }
 
     #[test]
@@ -688,17 +812,29 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// Uçtan uca: karar → kafes → iz → kanıt → JSON export.
+    ///
+    /// İz tablosu `pipeline::trace_table_from` ile üretiliyor; yani bu test
+    /// aynı zamanda kanıtlanan tablonun gösterilen tablo olduğunu da koşuyor.
     #[test]
     fn test_full_bridge_integration_with_rho_prime() {
-        let rho_prime = generate_rho_prime_from_entropy(98.52, 42_000_000_000);
-        let options   = get_proof_options();
+        let istek = RunRequest {
+            risk_score   : 95.0,
+            tau          : 75.0,
+            baseline     : MlDsaSecurityLevel::Level44,
+            user_op_hash : "0xdeadbeefcafebabe".to_string(),
+            epoch_ns     : 42_000_000_000,
+            run_id       : "entegrasyon".to_string(),
+            fresh_entropy: None,
+            rho_override : None,
+        };
 
-        let (trace, _rho) = build_parameterized_trace(
-            rho_prime,
-            MlDsaSecurityLevel::Level87,
-            rho_prime[0] as u128 * 256 + rho_prime[1] as u128,
-            rho_prime[2] as u128 * 256 + rho_prime[3] as u128,
-        );
+        let outcome = pipeline::run(&istek).unwrap();
+        assert!(outcome.decision.proof_required, "risk 95 > τ 75 → kanıt üretilmeli");
+
+        let rho_prime = outcome.rho_prime;
+        let options   = get_proof_options();
+        let trace     = pipeline::trace_table_for(&outcome).unwrap();
 
         let last_step  = trace.length() - 1;
         let pub_inputs = QAdaptivePublicInputs {
@@ -715,14 +851,44 @@ mod tests {
         let prover = QAdaptiveProver::new(options);
         let proof  = prover.prove(trace).unwrap();
 
-        let filepath = "test_proof_payload_rho.json";
+        let filepath    = "test_proof_payload_rho.json";
+        let proof_bytes = proof.to_bytes();
+        let kayit       = outcome.pqc.as_ref().unwrap();
+
         export_proof_payload(
-            "PANIC_MODE_ACTIVATED",
-            98.52,
+            outcome.decision.status,
+            istek.risk_score,
             &rho_prime,
-            "ML-DSA-87 (Dilithium-5)",
-            &proof.to_bytes(),
+            outcome.decision.level.name(),
+            &proof_bytes,
             &pub_inputs,
+            bridge::PayloadExtras {
+                tau          : istek.tau,
+                run_id       : istek.run_id.clone(),
+                deterministic: outcome.deterministic,
+                stark        : bridge::StarkMetrics {
+                    proof_bytes              : proof_bytes.len(),
+                    prover_ms                : 0.0,
+                    conjectured_security_bits: air::STARK_SECURITY_BITS,
+                    field                    : "f128".to_string(),
+                    num_queries              : air::FRI_NUM_QUERIES,
+                    blowup_factor            : air::FRI_BLOWUP_FACTOR,
+                },
+                pqc: Some(bridge::PqcSummary {
+                    tier                     : kayit.level.name().to_string(),
+                    public_key_bytes         : kayit.public_key_len,
+                    secret_key_bytes         : kayit.secret_key_len,
+                    signature_bytes          : kayit.signature_len,
+                    public_key_commitment_hex: hex::encode(kayit.public_key_commitment),
+                    signature_prefix_hex     : kayit.signature_prefix_hex.clone(),
+                    signature_verified       : kayit.verified,
+                }),
+                calldata: Some(bridge::CalldataRecord::compute(
+                    bridge::CalldataRecord::DEFAULT_BATCH_SIZE,
+                    kayit.signature_len,
+                    proof_bytes.len(),
+                )),
+            },
             filepath,
         ).unwrap();
 

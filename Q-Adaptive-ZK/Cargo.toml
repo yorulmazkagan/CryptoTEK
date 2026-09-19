@@ -36,6 +36,22 @@ winter-utils    = { version = "0.13.1", features = ["std"] }
 # ── Üst Şemsiye Crate (Kolaylık Exportları İçin) ─────────────────────────────
 winterfell = { version = "0.13.1", features = ["std"] }
 
+# ── Post-Kuantum İmza (NIST FIPS 204 ML-DSA) ─────────────────────────────────
+# Saf Rust ML-DSA uygulaması — C bağımlılığı yok, üç güvenlik seviyesi de açık.
+# Zırh kademesi değiştiğinde gerçek anahtar çifti üretilir, gerçek imza atılır
+# ve doğrulanır; ölçülen boyutlar FIPS 204 tablosuyla testte karşılaştırılır.
+fips204 = { version = "0.4.6", features = ["ml-dsa-44", "ml-dsa-65", "ml-dsa-87", "default-rng"] }
+
+# ── Kriptografik Karma (ρ' türetimi + kafes matris genişletmesi) ─────────────
+# blake3 : ρ' ve kısa tohum türetimi (alan-ayrımlı).
+# sha3   : SHAKE-128 XOF — FIPS 204 §7.3 ExpandA'nın kullandığı ilkelin aynısı.
+# Bu ikisi, kriptografik olmayan DefaultHasher (SipHash) kullanımının yerini
+# alır. SipHash'in Rust sürümleri arasında çıktı kararlılığı garantisi yoktur;
+# yani aynı ρ' başka bir derlemede başka bir matris üretebiliyordu — kanıt
+# yeniden üretilebilir değildi.
+blake3 = "1.8"
+sha3   = "0.10"
+
 # ── Seri Hale Getirme (Metadata JSON I/O) ────────────────────────────────────
 serde       = { version = "1.0", features = ["derive"] }
 serde_json  = "1.0"

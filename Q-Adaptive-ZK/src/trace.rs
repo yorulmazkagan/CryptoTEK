@@ -49,9 +49,13 @@
 //   saldırganın geçmiş kafes korelasyon telemetrisi tamamen geçersiz kalır.
 // =============================================================================
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use winterfell::math::{fields::f128::BaseElement, StarkField};
+
+// Kriptografik türetmelerin tamamı `hashing` modülünden gelir.
+// Bu dosyada daha önce `DefaultHasher` (SipHash) kullanılıyordu; kaldırıldı.
+// Gerekçe için bkz. src/hashing.rs başlığı.
+pub use crate::hashing::{compute_lattice_commitment, expand_matrix_a};
+use crate::hashing::derive_short_seeds;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // İz Sabitleri
@@ -100,6 +104,38 @@ impl MlDsaSecurityLevel {
             MlDsaSecurityLevel::Level44 => "ML-DSA-44",
             MlDsaSecurityLevel::Level65 => "ML-DSA-65",
             MlDsaSecurityLevel::Level87 => "ML-DSA-87 (Dilithium-5)",
+        }
+    }
+
+    /// Kademelerin sıralamasını verir (44 < 65 < 87).
+    ///
+    /// Tek yönlü tırmanma kuralı bu sıralama üzerinden uygulanır:
+    /// zırh yalnızca `rank` değeri artacak şekilde değişebilir.
+    /// Bkz. `armor::decide` ve zincir tarafında `_applyArmorUpdate`.
+    pub fn rank(&self) -> u8 {
+        match self {
+            MlDsaSecurityLevel::Level44 => 0,
+            MlDsaSecurityLevel::Level65 => 1,
+            MlDsaSecurityLevel::Level87 => 2,
+        }
+    }
+
+    /// CLI argümanından güvenlik kademesini ayrıştırır.
+    ///
+    /// Eski uygulama `"87" | _ => Level87` deseniyle **geçersiz girdiyi
+    /// sessizce en yüksek kademeye düşürüyordu**. Güvenli yöndeydi ama
+    /// sessizdi: `--level abc` yazan bir yapılandırma hatası hiç fark
+    /// edilmeden geçiyordu. Artık açık bir `Result` dönüyor ve CLI
+    /// geçersiz girdide çıkış kodu 1 ile duruyor.
+    pub fn parse(girdi: &str) -> Result<Self, String> {
+        match girdi.trim() {
+            "44" => Ok(MlDsaSecurityLevel::Level44),
+            "65" => Ok(MlDsaSecurityLevel::Level65),
+            "87" => Ok(MlDsaSecurityLevel::Level87),
+            diger => Err(format!(
+                "Geçersiz --level değeri: '{}'. Beklenen: 44, 65 veya 87.",
+                diger
+            )),
         }
     }
 }
@@ -172,110 +208,19 @@ impl LatticeModuleConfig {
 // Kafes Matris Genişletme (Deterministik, rho-prime tabanlı)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// rho-prime seed'inden A ∈ R_q^{k×ℓ} matrisini genişletir.
-///
-/// Bu fonksiyon, NIST FIPS 204 §5.1'deki `ExpandA(ρ)` prosedürünü
-/// skalar alan üzerinde simüle eder. Gerçek uygulamada her eleman
-/// bir polinom (256 katsayı, her biri < q) olacaktır. Burada her
-/// (i, j) için tek bir skalar kafes taahhüdü türetilir.
-///
-/// Türetme yöntemi (liboqs::sig::Sig::keypair_from_seed davranışını taklit eder):
-///   A[i][j] = DETERMINISTIC_HASH(rho_prime || i as u8 || j as u8) % q
-///
-/// NIST Uyum Notu:
-///   Gerçek ML-DSA ExpandA, SHAKE-128 XOF ile 256 katsayılı polinomlar üretir.
-///   Bu simülasyon, çığ etkisi özelliğini koruyarak STARK izine entegre
-///   edilebilen skalar taahhütler üretir. Tam polinom uygulaması için
-///   ayrı bir `ntt.rs` modülü gerekecektir (bkz. air.rs NTT bölümü).
-///
-/// Çığ Etkisi Garantisi:
-///   rho_prime'ın herhangi bir biti değiştiğinde:
-///   - Karma girişi (rho_prime || i || j) tamamen farklılaşır.
-///   - Her (i, j) için üretilen değer bağımsız olarak değişir.
-///   - Sonuç: A' ≠ A için tüm matris elemanları farklıdır.
-///   - Saldırganın önceki kafes korelasyon telemetrisi tamamen geçersiz kalır.
-///
-/// # Arguments
-/// * `rho` - 32-byte seed (ρ' — AI Guardian entropi çıktısı).
-/// * `k`   - Matris satır sayısı.
-/// * `ell` - Matris sütun sayısı.
-/// * `q`   - Modüler alan karakteristiği.
-///
-/// # Returns
-/// `k×ℓ` boyutunda u128 matris; her eleman [0, q) aralığında.
-pub fn expand_matrix_a(rho: &[u8; 32], k: usize, ell: usize, q: u128) -> Vec<Vec<u128>> {
-    let mut matrix = Vec::with_capacity(k);
-
-    for i in 0..k {
-        let mut row = Vec::with_capacity(ell);
-        for j in 0..ell {
-            // Deterministik karma: rho_prime || satır indisi || sütun indisi
-            // Gerçek ML-DSA: SHAKE-128 XOF ile 256 polinomlu genişletme.
-            // Bu simülasyon: Rust'ın DefaultHasher'ını PRNG tohumlaması için kullanır,
-            // ardından rho baytlarıyla kombinler — çığ etkisi sağlanır.
-            let element = deterministic_field_element(rho, i as u8, j as u8, q);
-            row.push(element);
-        }
-        matrix.push(row);
-    }
-
-    matrix
-}
-
-/// rho || i || j'den tek bir [0, q) alan elementi türetir.
-///
-/// Bu yardımcı fonksiyon, SHAKE-128 XOF'nin skalar simülasyonudur.
-/// Gerçek uygulamada bu satır şöyle görünecektir:
-///   `let mut xof = Shake128::default(); xof.update(rho); xof.update(&[i, j]); ...`
-///
-/// Burada, dış bağımlılık olmadan çığ etkisini sağlamak için
-/// rho baytlarının XOR'u ve endislerin karmasını birleştiriyoruz.
-/// Bu yaklaşım test/simülasyon amaçlıdır; üretim: `sha3` crate'i kullanın.
-fn deterministic_field_element(rho: &[u8; 32], row_idx: u8, col_idx: u8, q: u128) -> u128 {
-    // rho baytlarını sıralı olarak bir 64-bit değere katlayarak çığ etkisi sağla
-    let mut hasher = DefaultHasher::new();
-
-    // Tüm rho baytlarını hash'e dahil et — tek bir bit değişikliği tüm çıktıyı etkiler
-    for (position, &byte) in rho.iter().enumerate() {
-        // Konum farkındalığı: aynı bayt farklı konumda farklı katkıda bulunur
-        let contribution = (byte as u64).wrapping_mul(position as u64 + 1)
-            .wrapping_add(row_idx as u64 * 31)
-            .wrapping_add(col_idx as u64 * 37);
-        contribution.hash(&mut hasher);
-    }
-
-    // Ek: (row_idx, col_idx) çiftini doğrudan hash'e ekle
-    (row_idx as u64).hash(&mut hasher);
-    (col_idx as u64).hash(&mut hasher);
-
-    let hash_val = hasher.finish() as u128;
-
-    // q ile mod al → [0, q) aralığında alan elementi
-    // Üretimde: ham hash'i genişletmek için SHAKE-128 XOF kullanılır
-    //           böylece mod önyargısı minimize edilir.
-    hash_val % q
-}
-
-/// Tam k×ℓ matrisinin BLAKE3 taahhüt özeti (skalar taahhüt).
-///
-/// STARK izi 4 sütunda tutulduğu için tam matris yerine bu tek taahhüt
-/// değeri sütun 0'da kullanılır. Matrisin bütünlüğü bu hash üzerinden
-/// kanıtlanır.
-///
-/// Türetme:
-///   commitment = H(rho_prime || k_byte || ell_byte) % q
-///   Burada H, tüm matris elemanlarını katlayan bir hash fonksiyonudur.
-pub fn compute_lattice_commitment(matrix: &[Vec<u128>], q: u128) -> u128 {
-    let mut hasher = DefaultHasher::new();
-
-    for row in matrix {
-        for &elem in row {
-            elem.hash(&mut hasher);
-        }
-    }
-
-    hasher.finish() as u128 % q
-}
+// Bu bölümdeki üç fonksiyon (`expand_matrix_a`, `deterministic_field_element`,
+// `compute_lattice_commitment`) `src/hashing.rs`'e taşındı ve kriptografik
+// ilkellerle yeniden yazıldı:
+//
+//   • Matris genişletmesi artık SHAKE-128 XOF + rejection sampling kullanıyor
+//     — FIPS 204 §7.3 ExpandA'nın kullandığı ilkelin aynısı. Eski `% q`
+//     daraltması modüler önyargı yaratıyordu.
+//   • Taahhüt BLAKE3 ile hesaplanıyor; yorum "BLAKE3" diyordu ama kod
+//     SipHash çalıştırıyordu.
+//   • `deterministic_field_element` tamamen kaldırıldı.
+//
+// İsimler dosyanın başındaki `pub use` ile buradan erişilebilir kalmaya
+// devam ediyor, böylece çağıran kod değişmedi.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Dilithium-5 Enjeksiyon Payload'u (Genişletilmiş)
@@ -347,6 +292,25 @@ impl Dilithium5InjectionPayload {
         Self::new_with_seed([0u8; 32], MlDsaSecurityLevel::Level87, 13, 7)
     }
 
+    /// ρ''den tam payload'u türetir — kısa tohumlar dahil.
+    ///
+    /// **Tercih edilen kurucu budur.** `new_with_seed` çağıranın s1/s2'yi
+    /// kendisinin üretmesini bekler; eski `main.rs` bunu ρ''nin ham
+    /// baytlarını ikiye bölerek yapıyordu:
+    ///
+    /// ```text
+    ///   seed_s1 = u128::from_le_bytes(rho_prime[0..16])   // HATA E6
+    ///   seed_s2 = u128::from_le_bytes(rho_prime[16..32])
+    /// ```
+    ///
+    /// Bu, ρ''nin 32 baytının tamamını herkese açık iz tablosunda açığa
+    /// çıkarıyordu. Artık tohumlar ayrı bir alan etiketiyle SHAKE/BLAKE3'ten
+    /// yeniden türetiliyor; izden s1/s2'yi okumak ρ' hakkında bilgi vermiyor.
+    pub fn from_rho_prime(rho_prime: [u8; 32], level: MlDsaSecurityLevel) -> Self {
+        let (seed_s1, seed_s2) = derive_short_seeds(&rho_prime, ML_DSA_Q);
+        Self::new_with_seed(rho_prime, level, seed_s1, seed_s2)
+    }
+
     /// Geriye uyumluluk için eski `new(seed_a, seed_s1, seed_s2)` arayüzü.
     /// seed_a artık kullanılmaz; rho_prime sıfır olarak başlatılır.
     #[deprecated(
@@ -415,8 +379,22 @@ impl QAdaptiveTrace {
         let mut col_s2       = Vec::with_capacity(length); // s2 polinom kayan
         let mut col_t        = Vec::with_capacity(length); // t = A*s1 + s2
 
-        let mut curr_s1 = payload.seed_s1 % q;
-        let mut curr_s2 = payload.seed_s2 % q;
+        // ── HATA E2 DÜZELTMESİ: aritmetik artık ALAN aritmetiği ──────────────
+        //
+        // Bu tablo eskiden u128 üzerinde `wrapping_mul(...) % q` ile
+        // hesaplanıyordu; kanıtlanan tablo (`pipeline::trace_table_from`) ise
+        // f128 alan aritmetiği kullanıyor ve AIR kısıtı da alan aritmetiğini
+        // doğruluyor (`next[3] - (next[0]*next[1] + next[2]) = 0`).
+        //
+        // Sonuç: sahnede jüriye gösterilen t sütunu, STARK'ın kanıtladığı t
+        // sütunu DEĞİLDİ — `% q` yüzünden farklı sayılardı.
+        //
+        // Artık burada da `BaseElement` işlemleri kullanılıyor, yani bu tablo
+        // kanıtlanan tablonun ta kendisi. `pipeline::trace_table_from` bunu
+        // kopyalayarak Winterfell tablosunu üretir; iki temsil arasında
+        // ayrışma imkânı kalmaz.
+        let mut curr_s1 = BaseElement::new(payload.seed_s1 % q);
+        let mut curr_s2 = BaseElement::new(payload.seed_s2 % q);
 
         for step in 0..length {
             // Köşegen kafes taahhüdü: adım başına farklı matris elemanı
@@ -424,20 +402,20 @@ impl QAdaptiveTrace {
             // rotasyonal bir temsilini sağlar.
             let row_idx = step % k;
             let col_idx = step % ell;
-            let a_elem  = payload.matrix_a[row_idx][col_idx] % q;
+            let a_elem  = BaseElement::new(payload.matrix_a[row_idx][col_idx] % q);
 
-            // MLWE ilişkisi: t = A * s1 + s2 (mod q)
-            // BaseElement wrapping aritmetiği kullanılır
-            let t_raw = a_elem.wrapping_mul(curr_s1).wrapping_add(curr_s2) % q;
+            // MLWE ilişkisi: t = A * s1 + s2 — AIR kısıtıyla birebir aynı ifade.
+            let t_elem = a_elem * curr_s1 + curr_s2;
 
-            col_a_commit.push(BaseElement::new(a_elem));
-            col_s1.push(BaseElement::new(curr_s1));
-            col_s2.push(BaseElement::new(curr_s2));
-            col_t.push(BaseElement::new(t_raw));
+            col_a_commit.push(a_elem);
+            col_s1.push(curr_s1);
+            col_s2.push(curr_s2);
+            col_t.push(t_elem);
 
-            // s1 ve s2'yi sonraki adım için güncelle (deterministik evrim)
-            curr_s1 = curr_s1.wrapping_add(2) % q;
-            curr_s2 = curr_s2.wrapping_add(3) % q;
+            // s1 ve s2'yi sonraki adım için güncelle (deterministik evrim).
+            // AIR: s1_next = s1_curr + 2, s2_next = s2_curr + 3.
+            curr_s1 += BaseElement::new(2);
+            curr_s2 += BaseElement::new(3);
         }
 
         Self {
@@ -449,6 +427,14 @@ impl QAdaptiveTrace {
 
     pub fn get(&self, step: usize, col: usize) -> BaseElement {
         self.data[col][step]
+    }
+
+    /// İz tablosundaki adım sayısı.
+    ///
+    /// `pipeline::trace_table_from` Winterfell tablosunu bu uzunlukta açar;
+    /// iki tablonun boyutu da tek kaynaktan gelir.
+    pub fn length(&self) -> usize {
+        self.trace_len
     }
 
     pub fn final_state(&self) -> [BaseElement; 4] {
@@ -547,10 +533,15 @@ mod tests {
             .filter(|(e1, e2)| e1 != e2)
             .count();
 
-        // Çığ etkisi: en az %80 elemanın farklı olması beklenir
+        // Çığ etkisi: SHAKE-128 ile beklenti TÜM hücrelerin değişmesi.
+        //
+        // Bu eşik eskiden "%80" idi; DefaultHasher tabanlı türetme 56/56'yı
+        // tutturamadığı için gevşetilmişti. Kriptografik XOF ile gevşetmeye
+        // gerek yok — eşik sıkılaştırıldı ki zayıf bir karma geri gelirse
+        // test kırılsın.
         let total = 8 * 7;
-        assert!(
-            different_count > total * 8 / 10,
+        assert_eq!(
+            different_count, total,
             "Çığ etkisi yetersiz: {} / {} eleman farklı", different_count, total
         );
     }
@@ -566,19 +557,83 @@ mod tests {
         );
         let trace = QAdaptiveTrace::new(&payload, 8);
 
-        // MLWE ilişkisi her adımda sağlanmalı: t = A * s1 + s2 (mod q)
+        // MLWE ilişkisi her adımda sağlanmalı: t = A * s1 + s2
+        //
+        // Dikkat: burada `% q` YOK. AIR kısıtı da alan aritmetiğini doğrular
+        // (bkz. air.rs::evaluate_transition). Bu testin `% q` ile yazılmış
+        // hâli, gösterilen izin kanıtlanan izden ayrışmasını gizliyordu.
         for step in 0..8 {
-            let a  = trace.get(step, 0).as_int();
-            let s1 = trace.get(step, 1).as_int();
-            let s2 = trace.get(step, 2).as_int();
-            let t  = trace.get(step, 3).as_int();
+            let a  = trace.get(step, 0);
+            let s1 = trace.get(step, 1);
+            let s2 = trace.get(step, 2);
+            let t  = trace.get(step, 3);
 
-            let expected_t = a.wrapping_mul(s1).wrapping_add(s2) % ML_DSA_Q;
             assert_eq!(
-                t, expected_t,
-                "MLWE ilişkisi adım {}'de bozuldu: t={} ≠ A*s1+s2={}", step, t, expected_t
+                t, a * s1 + s2,
+                "MLWE ilişkisi adım {}'de bozuldu", step
             );
         }
+    }
+
+    /// HATA E5 REGRESYONU — geçersiz `--level` sessizce 87'ye düşmemeli.
+    #[test]
+    fn test_level_parse_gecersiz_girdiyi_reddediyor() {
+        assert_eq!(MlDsaSecurityLevel::parse("44").unwrap(), MlDsaSecurityLevel::Level44);
+        assert_eq!(MlDsaSecurityLevel::parse("65").unwrap(), MlDsaSecurityLevel::Level65);
+        assert_eq!(MlDsaSecurityLevel::parse("87").unwrap(), MlDsaSecurityLevel::Level87);
+
+        // Eski desen `"87" | _ => Level87` bunların hepsini 87 yapardı.
+        for gecersiz in ["abc", "", "88", "-1", "44.0"] {
+            assert!(
+                MlDsaSecurityLevel::parse(gecersiz).is_err(),
+                "'{}' sessizce kabul edildi — eski desen geri gelmiş olabilir",
+                gecersiz
+            );
+        }
+    }
+
+    #[test]
+    fn test_kademe_siralamasi() {
+        assert!(MlDsaSecurityLevel::Level44.rank() < MlDsaSecurityLevel::Level65.rank());
+        assert!(MlDsaSecurityLevel::Level65.rank() < MlDsaSecurityLevel::Level87.rank());
+    }
+
+    /// HATA E6 REGRESYONU — kısa tohumlar ρ''nin ham baytları olmamalı.
+    #[test]
+    fn test_from_rho_prime_kisa_tohumlari_turetiyor() {
+        let rho = [0x6Bu8; 32];
+        let payload = Dilithium5InjectionPayload::from_rho_prime(rho, MlDsaSecurityLevel::Level87);
+
+        // Eski main.rs davranışı:
+        let mut b1 = [0u8; 16];
+        let mut b2 = [0u8; 16];
+        b1.copy_from_slice(&rho[0..16]);
+        b2.copy_from_slice(&rho[16..32]);
+        let eski_s1 = u128::from_le_bytes(b1) % ML_DSA_Q;
+        let eski_s2 = u128::from_le_bytes(b2) % ML_DSA_Q;
+
+        assert_ne!(payload.seed_s1, eski_s1, "s1 hâlâ ρ''nin ham baytlarından");
+        assert_ne!(payload.seed_s2, eski_s2, "s2 hâlâ ρ''nin ham baytlarından");
+    }
+
+    /// BULGU 4 REGRESYONU — kademe değişince kafes GERÇEKTEN büyüyor.
+    #[test]
+    fn test_kademe_matris_boyutunu_degistiriyor() {
+        let rho = [0x2Du8; 32];
+
+        let p44 = Dilithium5InjectionPayload::from_rho_prime(rho, MlDsaSecurityLevel::Level44);
+        let p65 = Dilithium5InjectionPayload::from_rho_prime(rho, MlDsaSecurityLevel::Level65);
+        let p87 = Dilithium5InjectionPayload::from_rho_prime(rho, MlDsaSecurityLevel::Level87);
+
+        assert_eq!(p44.config.matrix_elements(), 16); // 4×4
+        assert_eq!(p65.config.matrix_elements(), 30); // 6×5
+        assert_eq!(p87.config.matrix_elements(), 56); // 8×7
+
+        assert!(
+            p44.config.matrix_elements() < p65.config.matrix_elements()
+                && p65.config.matrix_elements() < p87.config.matrix_elements(),
+            "Zırh kademesi kafes boyutunu artırmalı"
+        );
     }
 
     #[test]
@@ -587,7 +642,21 @@ mod tests {
         #[allow(deprecated)]
         let payload = Dilithium5InjectionPayload::new(42, 13, 7);
         let trace   = QAdaptiveTrace::new(&payload, 8);
-        // En az ilk adım geçerli olmalı
-        assert!(trace.get(0, 3).as_int() < ML_DSA_Q);
+
+        // Bu iddia eskiden `trace.get(0, 3).as_int() < ML_DSA_Q` idi.
+        //
+        // O iddia, t sütununun `% q` ile daraltıldığını varsayıyordu — yani
+        // hata E2'nin kendisini sabitliyordu. AIR kısıtı `% q` uygulamaz
+        // (`next[3] = next[0]*next[1] + next[2]`), dolayısıyla t doğal olarak
+        // q'yu aşar. Doğru değişmez, MLWE ilişkisinin kendisidir:
+        let a  = trace.get(0, 0);
+        let s1 = trace.get(0, 1);
+        let s2 = trace.get(0, 2);
+        assert_eq!(trace.get(0, 3), a * s1 + s2);
+
+        // A, s1 ve s2 girdileri ise hâlâ alan içinde olmalı.
+        assert!(a.as_int()  < ML_DSA_Q);
+        assert!(s1.as_int() < ML_DSA_Q);
+        assert!(s2.as_int() < ML_DSA_Q);
     }
 }

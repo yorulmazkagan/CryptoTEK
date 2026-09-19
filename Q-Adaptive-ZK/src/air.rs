@@ -85,19 +85,42 @@ use winterfell::{
 // Kanıt Seçenekleri (Güvenlik Parametreleri)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// STARK konjektürel güvenlik seviyesi — **tek doğruluk kaynağı**.
+///
+/// Bu sabit üç yerde birden kullanılır:
+///   • `get_proof_options()` bu seviyeyi hedefleyen parametreleri seçer,
+///   • doğrulayıcı `AcceptableOptions::MinConjecturedSecurity` ile dayatır,
+///   • `proof_payload.json` bunu `conjectured_security_bits` olarak taşır.
+///
+/// README ve raporlar bu sayıyı buradan almalıdır. Daha önce README "96"
+/// diyordu, kod ise 80 uyguluyordu — belge kodun üstünde bir güvenlik
+/// seviyesi ilan ediyordu.
+///
+/// Prototip **bilinçli olarak** temkinli 80-bit ayarındadır. Yükseltmek için
+/// `FRI_NUM_QUERIES` ile bu sabit BİRLİKTE artırılmalıdır.
+pub const STARK_SECURITY_BITS: u32 = 80;
+
+/// FRI sorgu sayısı. `STARK_SECURITY_BITS` ile birlikte ayarlanır.
+pub const FRI_NUM_QUERIES: usize = 28;
+
+/// LDE genişleme faktörü (blowup).
+pub const FRI_BLOWUP_FACTOR: usize = 8;
+
+/// Proof-of-work (grinding) zorluk faktörü.
+pub const GRINDING_FACTOR: u32 = 16;
+
 /// Winterfell STARK kanıt seçenekleri.
 ///
-/// Güvenlik parametreleri:
-///   - num_queries=28      : 80-bit konjektürel güvenlik için sorgu sayısı
-///   - blowup_factor=8     : LDE (Low Degree Extension) genişleme faktörü
-///   - grinding_factor=16  : PoW zorluk faktörü (proof-of-work)
-///   - FRI folding=8       : FRI katlama faktörü
-///   - FRI remainder=31    : FRI kalan maksimum derecesi
+/// Güvenlik parametreleri yukarıdaki sabitlerden gelir; bu fonksiyonun
+/// gövdesinde elle yazılmış güvenlik sayısı yoktur.
+///
+///   - FRI folding=8    : FRI katlama faktörü
+///   - FRI remainder=31 : FRI kalan maksimum derecesi
 pub fn get_proof_options() -> ProofOptions {
     ProofOptions::new(
-        28,                         // num_queries
-        8,                          // blowup_factor
-        16,                         // grinding_factor
+        FRI_NUM_QUERIES,
+        FRI_BLOWUP_FACTOR,
+        GRINDING_FACTOR,
         FieldExtension::None,
         8,                          // FRI folding factor
         31,                         // FRI remainder max degree
