@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.24;
 
 import {UserOperation} from "./interfaces/IUserOperation.sol";
 import {IEntryPoint} from "./interfaces/IEntryPoint.sol";

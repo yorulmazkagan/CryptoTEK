@@ -1,0 +1,9 @@
+{
+  "detectors_to_exclude": "timestamp,assembly,low-level-calls,naming-convention,unused-return",
+  "exclude_informational": false,
+  "exclude_low": false,
+  "exclude_medium": false,
+  "exclude_high": false,
+  "filter_paths": "lib/,test/",
+  "solc_disable_warnings": false
+}

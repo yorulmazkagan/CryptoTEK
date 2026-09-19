@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.24;
 
 import {UserOperation} from "./interfaces/IUserOperation.sol";
 import {IAICore} from "./interfaces/IAICore.sol";
@@ -264,7 +264,9 @@ contract QAdaptiveAccount {
     event RiskSourceUpdated(RiskSource previous, RiskSource current);
 
     /// @notice Guardian imzalayıcısı değiştiğinde.
-    event GuardianSignerUpdated(address previous, address current);
+    /// @dev Adresler `indexed`: guardian rotasyonu denetim açısından kritik
+    ///      bir olay ve belirli bir adrese göre filtrelenebilmeli.
+    event GuardianSignerUpdated(address indexed previous, address indexed current);
 
     /// @notice Zırh düşürüldüğünde (yalnızca sahip yapabilir).
     event QuantumArmorDowngraded(string newTier, uint8 newRank);
@@ -344,6 +346,17 @@ contract QAdaptiveAccount {
         address _owner,
         address _guardianSigner
     ) {
+        // Slither `missing-zero-check`: Paymaster bu kontrolleri yapiyordu,
+        // Account yapmiyordu — tutarsizlik. Sifir EntryPoint hesabi tamamen
+        // kullanilamaz kilar, sifir sahip ise geri alinamaz sekilde sahipsiz
+        // birakir; ikisi de deploy aninda yakalanmali.
+        require(_entryPoint != address(0), "QAdaptiveAccount: entryPoint is zero");
+        require(_owner != address(0), "QAdaptiveAccount: owner is zero");
+        // NOT: `_guardianSigner` icin sifir kontrolu KASITLI olarak yok.
+        // Sifir adres "guardian yok" anlamina gelir ve `_verifyAttestation`
+        // bunu acikca ele alir (`if (guardianSigner == address(0)) return
+        // (0, false)`), yani guardian imzasi kaynagi devre disi kalir.
+
         _status          = _NOT_ENTERED;
         entryPoint       = _entryPoint;
         aiCore           = IAICore(_aiCore);
