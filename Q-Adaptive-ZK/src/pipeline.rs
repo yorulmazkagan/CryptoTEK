@@ -53,21 +53,21 @@ use crate::trace::{
 #[derive(Clone, Debug)]
 pub struct RunRequest {
     /// AI'ın ürettiği risk yüzdesi (`--risk-score`).
-    pub risk_score   : f64,
+    pub risk_score: f64,
     /// Dinamik eşik τ(t) (`--tau`).
-    pub tau          : f64,
+    pub tau: f64,
     /// Hesabın taban zırh kademesi (`--baseline`).
-    pub baseline     : MlDsaSecurityLevel,
+    pub baseline: MlDsaSecurityLevel,
     /// Bu kanıtın bağlandığı UserOperation özeti (`--user-op-hash`).
-    pub user_op_hash : String,
+    pub user_op_hash: String,
     /// Dönem damgası, nanosaniye (`--epoch-ns`).
-    pub epoch_ns     : u64,
+    pub epoch_ns: u64,
     /// Koşu kimliği — loglarda ve payload'da izlenebilirlik için (`--run-id`).
-    pub run_id       : String,
+    pub run_id: String,
     /// Taze entropi (`--fresh-entropy`). `None` ise koşu tam deterministiktir.
     pub fresh_entropy: Option<[u8; 32]>,
     /// ρ' doğrudan verilmişse (`--rho-prime`) türetme atlanır.
-    pub rho_override : Option<[u8; 32]>,
+    pub rho_override: Option<[u8; 32]>,
 }
 
 impl RunRequest {
@@ -78,14 +78,14 @@ impl RunRequest {
     /// bu, "kanıt üretildi" görüntüsünü AI'dan bağımsız olarak üretiyordu.
     pub fn elle_kosu() -> Self {
         Self {
-            risk_score   : 50.0,
-            tau          : armor::VARSAYILAN_TAU,
-            baseline     : MlDsaSecurityLevel::Level44,
-            user_op_hash : String::new(),
-            epoch_ns     : 0,
-            run_id       : "elle".to_string(),
+            risk_score: 50.0,
+            tau: armor::VARSAYILAN_TAU,
+            baseline: MlDsaSecurityLevel::Level44,
+            user_op_hash: String::new(),
+            epoch_ns: 0,
+            run_id: "elle".to_string(),
             fresh_entropy: None,
-            rho_override : None,
+            rho_override: None,
         }
     }
 }
@@ -98,13 +98,13 @@ impl RunRequest {
 #[derive(Clone, Debug)]
 pub struct RunOutcome {
     /// Zırh kararı (kademe, kanıt gerekli mi, durum metni).
-    pub decision  : ArmorDecision,
+    pub decision: ArmorDecision,
     /// Bu koşuda kullanılan ρ'.
-    pub rho_prime : [u8; 32],
+    pub rho_prime: [u8; 32],
     /// Kanıt gerekliyse üretilen kafes payload'u.
-    pub payload   : Option<Dilithium5InjectionPayload>,
+    pub payload: Option<Dilithium5InjectionPayload>,
     /// Kanıt gerekliyse ölçülmüş ML-DSA imza kaydı.
-    pub pqc       : Option<PqcSignatureRecord>,
+    pub pqc: Option<PqcSignatureRecord>,
     /// Koşu tam deterministik miydi? (`fresh_entropy` verilmediyse `true`)
     pub deterministic: bool,
 }
@@ -181,15 +181,15 @@ pub fn trace_table_from(q_trace: &QAdaptiveTrace) -> TraceTable<BaseElement> {
 
     table.fill(
         |state| {
-            for col in 0..TRACE_WIDTH {
-                state[col] = q_trace.get(0, col);
+            for (col, hucre) in state.iter_mut().enumerate().take(TRACE_WIDTH) {
+                *hucre = q_trace.get(0, col);
             }
         },
         |step, state| {
             // `step` mevcut adım; doldurulan satır `step + 1`.
             let sonraki = step + 1;
-            for col in 0..TRACE_WIDTH {
-                state[col] = q_trace.get(sonraki, col);
+            for (col, hucre) in state.iter_mut().enumerate().take(TRACE_WIDTH) {
+                *hucre = q_trace.get(sonraki, col);
             }
         },
     );
@@ -198,6 +198,10 @@ pub fn trace_table_from(q_trace: &QAdaptiveTrace) -> TraceTable<BaseElement> {
 }
 
 /// Bir koşu sonucundan doğrudan Winterfell tablosu üretir.
+///
+/// `main` akışı tabloyu `build_trace_for_display_and_proof` üzerinden alır
+/// (çünkü aynı anda ekrana da basar); bu kısayol testlerden çağrılır.
+#[allow(dead_code)]
 pub fn trace_table_for(outcome: &RunOutcome) -> Option<TraceTable<BaseElement>> {
     let payload = outcome.payload.as_ref()?;
     let q_trace = QAdaptiveTrace::new(payload, TRACE_LENGTH);
@@ -215,14 +219,14 @@ mod tests {
 
     fn istek(risk: f64, tau: f64) -> RunRequest {
         RunRequest {
-            risk_score   : risk,
+            risk_score: risk,
             tau,
-            baseline     : MlDsaSecurityLevel::Level44,
-            user_op_hash : "0xdeadbeefcafebabe".to_string(),
-            epoch_ns     : 1_700_000_000_000_000_000,
-            run_id       : "test".to_string(),
+            baseline: MlDsaSecurityLevel::Level44,
+            user_op_hash: "0xdeadbeefcafebabe".to_string(),
+            epoch_ns: 1_700_000_000_000_000_000,
+            run_id: "test".to_string(),
             fresh_entropy: None,
-            rho_override : None,
+            rho_override: None,
         }
     }
 
@@ -233,8 +237,8 @@ mod tests {
     /// davranışı) bu test kırılır: üç koşu da aynı sonucu verir.
     #[test]
     fn otonomi_koprusu_riski_kripto_katmanina_tasiyor() {
-        let dusuk  = run(&istek(76.0, 75.0)).unwrap(); // aşım  1 → 44
-        let orta   = run(&istek(82.0, 75.0)).unwrap(); // aşım  7 → 65
+        let dusuk = run(&istek(76.0, 75.0)).unwrap(); // aşım  1 → 44
+        let orta = run(&istek(82.0, 75.0)).unwrap(); // aşım  7 → 65
         let yuksek = run(&istek(95.0, 75.0)).unwrap(); // aşım 20 → 87
 
         let k = |o: &RunOutcome| o.payload.as_ref().unwrap().config.matrix_elements();
@@ -248,11 +252,17 @@ mod tests {
     #[test]
     fn tau_koprusu_kanit_uretimini_tetikliyor() {
         // Aynı risk, farklı τ → farklı karar.
-        let panik  = run(&istek(82.0, 75.0)).unwrap();
+        let panik = run(&istek(82.0, 75.0)).unwrap();
         let normal = run(&istek(82.0, 90.0)).unwrap();
 
-        assert!(panik.payload.is_some(),  "risk 82 > τ 75 iken kanıt üretilmeli");
-        assert!(normal.payload.is_none(), "risk 82 < τ 90 iken kanıt üretilmemeli");
+        assert!(
+            panik.payload.is_some(),
+            "risk 82 > τ 75 iken kanıt üretilmeli"
+        );
+        assert!(
+            normal.payload.is_none(),
+            "risk 82 < τ 90 iken kanıt üretilmemeli"
+        );
         assert!(normal.pqc.is_none());
     }
 
@@ -262,10 +272,10 @@ mod tests {
     /// eşit olmalı. İki uygulama tekrar ayrışırsa bu test kırılır.
     #[test]
     fn gosterilen_iz_kanitlanan_izle_ayni() {
-        let sonuc   = run(&istek(95.0, 75.0)).unwrap();
+        let sonuc = run(&istek(95.0, 75.0)).unwrap();
         let payload = sonuc.payload.as_ref().unwrap();
         let q_trace = QAdaptiveTrace::new(payload, TRACE_LENGTH);
-        let table   = trace_table_from(&q_trace);
+        let table = trace_table_from(&q_trace);
 
         assert_eq!(table.length(), TRACE_LENGTH);
         assert_eq!(table.width(), TRACE_WIDTH);
@@ -276,7 +286,8 @@ mod tests {
                     table.get(col, step),
                     q_trace.get(step, col),
                     "Adım {} sütun {}: gösterilen iz kanıtlanan izden ayrıştı",
-                    step, col
+                    step,
+                    col
                 );
             }
         }
@@ -285,15 +296,15 @@ mod tests {
     /// İz tablosunun MLWE ilişkisini her adımda sağladığını sınar.
     #[test]
     fn iz_mlwe_iliskisini_saglıyor() {
-        let sonuc   = run(&istek(95.0, 75.0)).unwrap();
+        let sonuc = run(&istek(95.0, 75.0)).unwrap();
         let payload = sonuc.payload.as_ref().unwrap();
         let q_trace = QAdaptiveTrace::new(payload, TRACE_LENGTH);
 
         for step in 0..TRACE_LENGTH {
-            let a  = q_trace.get(step, 0);
+            let a = q_trace.get(step, 0);
             let s1 = q_trace.get(step, 1);
             let s2 = q_trace.get(step, 2);
-            let t  = q_trace.get(step, 3);
+            let t = q_trace.get(step, 3);
             assert_eq!(t, a * s1 + s2, "adım {}", step);
         }
     }
@@ -325,7 +336,10 @@ mod tests {
         ist.fresh_entropy = Some([0x11u8; 32]);
         let sonuc = run(&ist).unwrap();
 
-        assert!(!sonuc.deterministic, "taze entropi koşusu deterministik sayılmamalı");
+        assert!(
+            !sonuc.deterministic,
+            "taze entropi koşusu deterministik sayılmamalı"
+        );
         // Taze entropi ρ''yü gerçekten değiştirmeli.
         assert_ne!(sonuc.rho_prime, run(&istek(95.0, 75.0)).unwrap().rho_prime);
     }
@@ -341,7 +355,10 @@ mod tests {
         let ra = run(&a).unwrap();
         let rb = run(&b).unwrap();
 
-        assert_ne!(ra.rho_prime, rb.rho_prime, "farklı UserOperation farklı ρ' vermeli");
+        assert_ne!(
+            ra.rho_prime, rb.rho_prime,
+            "farklı UserOperation farklı ρ' vermeli"
+        );
     }
 
     /// Taban kademe kanıt akışında da korunuyor mu?

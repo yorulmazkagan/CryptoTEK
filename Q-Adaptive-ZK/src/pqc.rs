@@ -58,8 +58,15 @@ const SIGN_CONTEXT: &[u8] = b"Q-ADAPTIVE-GUARDIAN";
 
 /// Bir güvenlik kademesi için standardın öngördüğü (pk, sk, imza) boyutları.
 ///
-/// Bu değerler standarttan gelir ve `fips204` crate'inin sabitleriyle
-/// karşılaştırılır; ayrışırlarsa `standart_boyutlari_uyusuyor` testi kırılır.
+/// Bu değerler NIST FIPS 204 Tablo 2'den ELLE alınmıştır ve kasıtlı olarak
+/// `fips204` crate'inden BAĞIMSIZDIR. `standart_boyutlari_uyusuyor` testi
+/// kütüphanenin ürettiği boyutları bu tabloyla karşılaştırır; kütüphane bir
+/// gün yanlış boyut üretirse test kırılır. Aynı kaynaktan okunsalardı test
+/// hiçbir şey kanıtlamazdı.
+///
+/// Yalnızca testlerden çağrıldığı için ikili derlemede "kullanılmıyor"
+/// görünür; referans tablosu olarak burada durması kasıtlıdır.
+#[allow(dead_code)]
 pub fn standart_boyutlar(level: MlDsaSecurityLevel) -> (usize, usize, usize) {
     match level {
         MlDsaSecurityLevel::Level44 => (1_312, 2_560, 2_420),
@@ -78,19 +85,19 @@ pub fn standart_boyutlar(level: MlDsaSecurityLevel) -> (usize, usize, usize) {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PqcSignatureRecord {
     /// Bu koşuda kullanılan güvenlik kademesi.
-    pub level          : MlDsaSecurityLevel,
+    pub level: MlDsaSecurityLevel,
     /// Açık anahtar uzunluğu (bayt).
-    pub public_key_len : usize,
+    pub public_key_len: usize,
     /// Gizli anahtar uzunluğu (bayt).
-    pub secret_key_len : usize,
+    pub secret_key_len: usize,
     /// İmza uzunluğu (bayt).
-    pub signature_len  : usize,
+    pub signature_len: usize,
     /// Açık anahtarın BLAKE3 taahhüdü — zincire yazılabilir kimlik.
     pub public_key_commitment: [u8; 32],
     /// İmzanın ilk 16 baytı (hex) — kayıt/gösterim amaçlı.
-    pub signature_prefix_hex : String,
+    pub signature_prefix_hex: String,
     /// İmza bu koşuda gerçekten doğrulandı mı?
-    pub verified       : bool,
+    pub verified: bool,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,20 +122,20 @@ macro_rules! kademe_akisi {
         // 3) Gerçek doğrulama.
         let verified = pk.verify($mesaj, &sig, SIGN_CONTEXT);
 
-        let pk_bytes  = pk.into_bytes();
-        let sk_bytes  = sk.into_bytes();
+        let pk_bytes = pk.into_bytes();
+        let sk_bytes = sk.into_bytes();
         let sig_bytes = sig;
 
         let mut commitment = [0u8; 32];
         commitment.copy_from_slice(blake3::hash(&pk_bytes).as_bytes());
 
         PqcSignatureRecord {
-            level                : $level,
-            public_key_len       : pk_bytes.len(),
-            secret_key_len       : sk_bytes.len(),
-            signature_len        : sig_bytes.len(),
+            level: $level,
+            public_key_len: pk_bytes.len(),
+            secret_key_len: sk_bytes.len(),
+            signature_len: sig_bytes.len(),
             public_key_commitment: commitment,
-            signature_prefix_hex : hex::encode(&sig_bytes[..16]),
+            signature_prefix_hex: hex::encode(&sig_bytes[..16]),
             verified,
         }
     }};
@@ -144,11 +151,11 @@ macro_rules! kademe_akisi {
 /// # Returns
 /// Ölçülmüş `PqcSignatureRecord`, ya da kütüphane hatası.
 pub fn sign_and_verify(
-    rho_prime : &[u8; 32],
-    level     : MlDsaSecurityLevel,
-    mesaj     : &[u8],
+    rho_prime: &[u8; 32],
+    level: MlDsaSecurityLevel,
+    mesaj: &[u8],
 ) -> Result<PqcSignatureRecord, String> {
-    let xi        = turet_tohum(rho_prime, DOMAIN_KEYGEN_XI);
+    let xi = turet_tohum(rho_prime, DOMAIN_KEYGEN_XI);
     let sign_seed = turet_tohum(rho_prime, DOMAIN_SIGN_SEED);
 
     let record = match level {
@@ -180,12 +187,16 @@ pub fn sign_and_verify(
 ///
 /// # Returns
 /// `Ok(true)` — kurcalanmış mesaj **reddedildi** (beklenen davranış).
+///
+/// Yalnızca `kurcalanan_mesaj_reddediliyor` testinden çağrılır; üretim
+/// akışında yeri yoktur, o yüzden ikili derlemede "kullanılmıyor" görünür.
+#[allow(dead_code)]
 pub fn kurcalama_reddediliyor(
-    rho_prime : &[u8; 32],
-    level     : MlDsaSecurityLevel,
-    mesaj     : &[u8],
+    rho_prime: &[u8; 32],
+    level: MlDsaSecurityLevel,
+    mesaj: &[u8],
 ) -> Result<bool, String> {
-    let xi        = turet_tohum(rho_prime, DOMAIN_KEYGEN_XI);
+    let xi = turet_tohum(rho_prime, DOMAIN_KEYGEN_XI);
     let sign_seed = turet_tohum(rho_prime, DOMAIN_SIGN_SEED);
 
     // Mesajın son baytını çevir — imza bu mesaj için atılmadı.
@@ -203,7 +214,7 @@ pub fn kurcalama_reddediliyor(
                 .try_sign_with_seed(&sign_seed, mesaj, SIGN_CONTEXT)
                 .map_err(|e| format!("ML-DSA imzalama başarısız: {}", e))?;
             // Orijinal mesajda geçerli, kurcalanmışta geçersiz olmalı.
-            let orijinal_gecerli   = pk.verify(mesaj, &sig, SIGN_CONTEXT);
+            let orijinal_gecerli = pk.verify(mesaj, &sig, SIGN_CONTEXT);
             let kurcalanmis_gecerli = pk.verify(&kurcalanmis, &sig, SIGN_CONTEXT);
             (orijinal_gecerli, kurcalanmis_gecerli)
         }};
@@ -270,16 +281,22 @@ mod tests {
             let kayit = sign_and_verify(&RHO, level, MESAJ).unwrap();
 
             assert_eq!(
-                kayit.public_key_len, pk_beklenen,
-                "{} açık anahtar boyutu standartla uyuşmuyor", level.name()
+                kayit.public_key_len,
+                pk_beklenen,
+                "{} açık anahtar boyutu standartla uyuşmuyor",
+                level.name()
             );
             assert_eq!(
-                kayit.secret_key_len, sk_beklenen,
-                "{} gizli anahtar boyutu standartla uyuşmuyor", level.name()
+                kayit.secret_key_len,
+                sk_beklenen,
+                "{} gizli anahtar boyutu standartla uyuşmuyor",
+                level.name()
             );
             assert_eq!(
-                kayit.signature_len, sig_beklenen,
-                "{} imza boyutu standartla uyuşmuyor", level.name()
+                kayit.signature_len,
+                sig_beklenen,
+                "{} imza boyutu standartla uyuşmuyor",
+                level.name()
             );
         }
     }
@@ -298,7 +315,9 @@ mod tests {
         assert!(
             k44.signature_len < k65.signature_len && k65.signature_len < k87.signature_len,
             "İmza boyutu kademeyle artmalı: {} → {} → {}",
-            k44.signature_len, k65.signature_len, k87.signature_len
+            k44.signature_len,
+            k65.signature_len,
+            k87.signature_len
         );
         assert_eq!((k44.signature_len, k87.signature_len), (2_420, 4_627));
     }
@@ -313,7 +332,8 @@ mod tests {
         ] {
             assert!(
                 kurcalama_reddediliyor(&RHO, level, MESAJ).unwrap(),
-                "{}: kurcalanmış mesaj reddedilmedi", level.name()
+                "{}: kurcalanmış mesaj reddedilmedi",
+                level.name()
             );
         }
     }

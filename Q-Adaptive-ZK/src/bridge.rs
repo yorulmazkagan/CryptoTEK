@@ -12,23 +12,23 @@
 //   3. rho_prime_hex            → Rotasyon doğrulaması + updateQuantumArmor için
 // =============================================================================
 
+use crate::air::QAdaptivePublicInputs;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Write;
 use winterfell::math::StarkField;
-use crate::air::QAdaptivePublicInputs;
 
 /// Solidity `validateUserOp` için gerekli olan sınır koşulları.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AirVerificationMetadata {
-    pub start_a : String,
+    pub start_a: String,
     pub start_s1: String,
     pub start_s2: String,
-    pub start_t : String,
-    pub final_a : String,
+    pub start_t: String,
+    pub final_a: String,
     pub final_s1: String,
     pub final_s2: String,
-    pub final_t : String,
+    pub final_t: String,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,21 +56,21 @@ pub struct AirVerificationMetadata {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct CalldataRecord {
     /// Partideki işlem sayısı.
-    pub batch_size            : usize,
+    pub batch_size: usize,
     /// Bu zırh kademesinde tek bir ML-DSA imzasının boyutu (bayt).
     pub single_signature_bytes: usize,
     /// Parti tek tek imzalansaydı taşınacak toplam bayt.
-    pub naive_batch_bytes     : usize,
+    pub naive_batch_bytes: usize,
     /// Partinin yerine geçen tek STARK kanıtının boyutu (bayt).
-    pub stark_proof_bytes     : usize,
+    pub stark_proof_bytes: usize,
     /// Tasarruf yüzdesi.
-    pub savings_pct           : f64,
+    pub savings_pct: f64,
     /// Aynı partinin ECDSA ile maliyeti — karşılaştırma dürüstlüğü için.
-    pub ecdsa_batch_bytes     : usize,
+    pub ecdsa_batch_bytes: usize,
     /// STARK kanıtı ECDSA partisinden küçük mü? (Beklenen yanıt: hayır.)
-    pub beats_ecdsa           : bool,
+    pub beats_ecdsa: bool,
     /// Formülün metinsel hâli — sayı yeniden hesaplanabilir olsun diye.
-    pub formula               : String,
+    pub formula: String,
 }
 
 impl CalldataRecord {
@@ -86,9 +86,9 @@ impl CalldataRecord {
     ///   tasarruf% = (1 − STARK_kanıtı / (parti × ML-DSA_imza_boyutu)) × 100
     /// ```
     pub fn compute(
-        batch_size            : usize,
+        batch_size: usize,
         single_signature_bytes: usize,
-        stark_proof_bytes     : usize,
+        stark_proof_bytes: usize,
     ) -> Self {
         let naive_batch_bytes = batch_size * single_signature_bytes;
         let ecdsa_batch_bytes = batch_size * Self::ECDSA_SIGNATURE_BYTES;
@@ -124,13 +124,13 @@ impl CalldataRecord {
 /// Her alan `fips204`ten ölçülür; hiçbiri belgeden kopyalanmaz.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PqcSummary {
-    pub tier                     : String,
-    pub public_key_bytes         : usize,
-    pub secret_key_bytes         : usize,
-    pub signature_bytes          : usize,
+    pub tier: String,
+    pub public_key_bytes: usize,
+    pub secret_key_bytes: usize,
+    pub signature_bytes: usize,
     pub public_key_commitment_hex: String,
-    pub signature_prefix_hex     : String,
-    pub signature_verified       : bool,
+    pub signature_prefix_hex: String,
+    pub signature_verified: bool,
 }
 
 /// Bu koşuda ölçülmüş STARK metrikleri.
@@ -141,12 +141,12 @@ pub struct PqcSummary {
 /// değişir.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StarkMetrics {
-    pub proof_bytes               : usize,
-    pub prover_ms                 : f64,
-    pub conjectured_security_bits : u32,
-    pub field                     : String,
-    pub num_queries               : usize,
-    pub blowup_factor             : usize,
+    pub proof_bytes: usize,
+    pub prover_ms: f64,
+    pub conjectured_security_bits: u32,
+    pub field: String,
+    pub num_queries: usize,
+    pub blowup_factor: usize,
 }
 
 /// Akıllı sözleşme veya Web3 istemcisine gönderilecek root JSON objesi.
@@ -158,27 +158,27 @@ pub struct StarkMetrics {
 ///   - keccak256(rho_prime_hex) → yeni quantumPublicKey taahhüdü hesaplanır
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProofPayload {
-    pub status                   : String,
-    pub ai_risk_score            : f64,
+    pub status: String,
+    pub ai_risk_score: f64,
     /// Bu koşuda uygulanan dinamik eşik τ(t).
     /// Kararın hangi eşiğe göre verildiği payload'dan okunabilmeli.
-    pub tau                      : f64,
-    pub pqc_armor_tier           : String,
+    pub tau: f64,
+    pub pqc_armor_tier: String,
     /// ρ' (rho-prime) seed'inin 64 karakterlik hex kodlaması.
     /// AI rotasyon kararının kriptografik kanıtı.
-    pub rho_prime_hex            : String,
+    pub rho_prime_hex: String,
     /// Koşu tam deterministik miydi? `--fresh-entropy` verildiyse `false`.
     /// Jüri koşuyu tekrarlayabilmek için bu alana bakar.
-    pub deterministic_run        : bool,
+    pub deterministic_run: bool,
     /// Koşu kimliği — log ↔ payload eşleştirmesi için.
-    pub run_id                   : String,
-    pub stark_proof_bytes_hex    : String,
+    pub run_id: String,
+    pub stark_proof_bytes_hex: String,
     /// Ölçülmüş STARK metrikleri (sabit değil).
-    pub stark                    : StarkMetrics,
+    pub stark: StarkMetrics,
     /// Ölçülmüş ML-DSA anahtar/imza bilgileri.
-    pub pqc                      : Option<PqcSummary>,
+    pub pqc: Option<PqcSummary>,
     /// Calldata tasarrufu — tek tanım, girdileriyle birlikte.
-    pub calldata                 : Option<CalldataRecord>,
+    pub calldata: Option<CalldataRecord>,
     pub air_verification_metadata: AirVerificationMetadata,
 }
 
@@ -187,12 +187,12 @@ pub struct ProofPayload {
 /// Ayrı bir yapı olarak tutuluyor ki yeni bir ölçüm eklendiğinde fonksiyon
 /// imzası her seferinde uzamasın.
 pub struct PayloadExtras {
-    pub tau              : f64,
-    pub run_id           : String,
-    pub deterministic    : bool,
-    pub stark            : StarkMetrics,
-    pub pqc              : Option<PqcSummary>,
-    pub calldata         : Option<CalldataRecord>,
+    pub tau: f64,
+    pub run_id: String,
+    pub deterministic: bool,
+    pub stark: StarkMetrics,
+    pub pqc: Option<PqcSummary>,
+    pub calldata: Option<CalldataRecord>,
 }
 
 /// STARK kanıtını ve durum verisini standart JSON olarak dışa aktarır.
@@ -205,47 +205,55 @@ pub struct PayloadExtras {
 /// * `proof_bytes`   - Ham STARK kanıt baytları
 /// * `pub_inputs`    - STARK AIR başlangıç/bitiş durumları
 /// * `filepath`      - Çıktı JSON dosyası yolu
+///
+/// # Not
+///
+/// Sekiz argüman clippy'nin yedi sınırını aşıyor. Ölçümler zaten
+/// `PayloadExtras` altında gruplandı; kalanlar (durum, risk, ρ', kademe,
+/// kanıt, genel girdiler, dosya yolu) birbirinden bağımsız alanlar ve bir
+/// yapıya daha sarmak okunurluğu artırmıyor — bu bir dışa aktarma sınırı.
+#[allow(clippy::too_many_arguments)]
 pub fn export_proof_payload(
-    status      : &str,
-    risk_score  : f64,
-    rho_prime   : &[u8; 32],
-    armor_tier  : &str,
-    proof_bytes : &[u8],
-    pub_inputs  : &QAdaptivePublicInputs,
-    extras      : PayloadExtras,
-    filepath    : &str,
+    status: &str,
+    risk_score: f64,
+    rho_prime: &[u8; 32],
+    armor_tier: &str,
+    proof_bytes: &[u8],
+    pub_inputs: &QAdaptivePublicInputs,
+    extras: PayloadExtras,
+    filepath: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let hex_proof     = hex::encode(proof_bytes);
+    let hex_proof = hex::encode(proof_bytes);
     let rho_prime_hex = hex::encode(rho_prime);
 
     let metadata = AirVerificationMetadata {
-        start_a : pub_inputs.start_state[0].as_int().to_string(),
+        start_a: pub_inputs.start_state[0].as_int().to_string(),
         start_s1: pub_inputs.start_state[1].as_int().to_string(),
         start_s2: pub_inputs.start_state[2].as_int().to_string(),
-        start_t : pub_inputs.start_state[3].as_int().to_string(),
-        final_a : pub_inputs.final_state[0].as_int().to_string(),
+        start_t: pub_inputs.start_state[3].as_int().to_string(),
+        final_a: pub_inputs.final_state[0].as_int().to_string(),
         final_s1: pub_inputs.final_state[1].as_int().to_string(),
         final_s2: pub_inputs.final_state[2].as_int().to_string(),
-        final_t : pub_inputs.final_state[3].as_int().to_string(),
+        final_t: pub_inputs.final_state[3].as_int().to_string(),
     };
 
     let payload = ProofPayload {
-        status                    : status.to_string(),
-        ai_risk_score             : risk_score,
-        tau                       : extras.tau,
-        pqc_armor_tier            : armor_tier.to_string(),
+        status: status.to_string(),
+        ai_risk_score: risk_score,
+        tau: extras.tau,
+        pqc_armor_tier: armor_tier.to_string(),
         rho_prime_hex,
-        deterministic_run         : extras.deterministic,
-        run_id                    : extras.run_id,
-        stark_proof_bytes_hex     : hex_proof,
-        stark                     : extras.stark,
-        pqc                       : extras.pqc,
-        calldata                  : extras.calldata,
-        air_verification_metadata : metadata,
+        deterministic_run: extras.deterministic,
+        run_id: extras.run_id,
+        stark_proof_bytes_hex: hex_proof,
+        stark: extras.stark,
+        pqc: extras.pqc,
+        calldata: extras.calldata,
+        air_verification_metadata: metadata,
     };
 
     let json_data = serde_json::to_string_pretty(&payload)?;
-    let mut file  = File::create(filepath)?;
+    let mut file = File::create(filepath)?;
     file.write_all(json_data.as_bytes())?;
 
     Ok(())

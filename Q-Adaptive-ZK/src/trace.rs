@@ -54,8 +54,8 @@ use winterfell::math::{fields::f128::BaseElement, StarkField};
 // Kriptografik türetmelerin tamamı `hashing` modülünden gelir.
 // Bu dosyada daha önce `DefaultHasher` (SipHash) kullanılıyordu; kaldırıldı.
 // Gerekçe için bkz. src/hashing.rs başlığı.
-pub use crate::hashing::{compute_lattice_commitment, expand_matrix_a};
 use crate::hashing::derive_short_seeds;
+pub use crate::hashing::{compute_lattice_commitment, expand_matrix_a};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // İz Sabitleri
@@ -160,17 +160,17 @@ impl MlDsaSecurityLevel {
 #[derive(Clone, Debug)]
 pub struct LatticeModuleConfig {
     /// Modül matrisi satır boyutu (k).
-    pub k          : usize,
+    pub k: usize,
     /// Modül matrisi sütun boyutu (ℓ).
-    pub ell        : usize,
+    pub ell: usize,
     /// Kafes modülü asal modülü (q = 8380417 ML-DSA için).
-    pub q          : u128,
+    pub q: u128,
     /// 32-byte kriptografik seed ρ' (rho-prime).
     /// AI Guardian'dan türetilen entropi çıktısı.
     /// Tek bir bit değişikliği → tüm A matrisinin tamamen farklı olması.
-    pub rho_prime  : [u8; 32],
+    pub rho_prime: [u8; 32],
     /// Bu konfigürasyonun karşılık geldiği güvenlik seviyesi.
-    pub level      : MlDsaSecurityLevel,
+    pub level: MlDsaSecurityLevel,
 }
 
 impl LatticeModuleConfig {
@@ -189,11 +189,22 @@ impl LatticeModuleConfig {
     /// ```
     pub fn from_security_level(level: MlDsaSecurityLevel, rho_prime: [u8; 32]) -> Self {
         let (k, ell) = level.dimensions();
-        Self { k, ell, q: ML_DSA_Q, rho_prime, level }
+        Self {
+            k,
+            ell,
+            q: ML_DSA_Q,
+            rho_prime,
+            level,
+        }
     }
 
     /// Varsayılan panik modu konfigürasyonu: ML-DSA-87, k=8, ℓ=7.
-    /// Seed olarak sıfır dizisi kullanılır — yalnızca test/fallback için.
+    ///
+    /// Sıfır seed kullanır. Çağıran kalmadı: artık her koşu ρ''yü
+    /// `hashing::derive_rho_prime`den alıyor ve sıfır seed'e düşmek
+    /// determinizmi değil, öngörülebilirliği getirirdi. Soğuk başlangıç
+    /// senaryosu için API yüzeyinde bırakıldı.
+    #[allow(dead_code)]
     pub fn panic_mode_default() -> Self {
         Self::from_security_level(MlDsaSecurityLevel::Level87, [0u8; 32])
     }
@@ -230,27 +241,32 @@ impl LatticeModuleConfig {
 ///
 /// Genişletilmiş alan: `rho_prime` ve `config` eklendi.
 /// Önceki sabit `seed_a: u128` yerine tam `LatticeModuleConfig` kullanılır.
+/// Bazı alanlar (`rho_prime`, `lattice_commitment`, `armor_level`,
+/// `timelock_deadline`) şu an yalnızca JSON payload'a taşınmak üzere
+/// dolduruluyor; Rust tarafında okunmuyorlar. Payload modelinin bir parçası
+/// oldukları için tutuluyorlar.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct Dilithium5InjectionPayload {
     /// 32-byte kriptografik seed ρ' — AI Guardian entropi çıktısından türetilir.
     /// AI'ın rotate sinyali geldiğinde, yeni bir rho_prime üretilir ve bu
     /// alan güncellenir. Tek bir bit değişikliği → tüm yeni A' matrisinin
     /// genişlemesi.
-    pub rho_prime         : [u8; 32],
+    pub rho_prime: [u8; 32],
     /// Kafes modül konfigürasyonu — güvenlik seviyesi ve matris boyutları.
-    pub config            : LatticeModuleConfig,
+    pub config: LatticeModuleConfig,
     /// Genişletilmiş A matrisi — config ve rho_prime'dan türetilir.
-    pub matrix_a          : Vec<Vec<u128>>,
+    pub matrix_a: Vec<Vec<u128>>,
     /// Tam matrisin skalar STARK taahhüdü (tek sütun).
     pub lattice_commitment: u128,
     /// s1 polinom vektörü seed'i (kısa polinom — hata terimi).
-    pub seed_s1           : u128,
+    pub seed_s1: u128,
     /// s2 polinom vektörü seed'i (kısa polinom — hata terimi).
-    pub seed_s2           : u128,
+    pub seed_s2: u128,
     /// Zırh seviyesi (0=Hafif, 1=Ağır).
-    pub armor_level       : u8,
+    pub armor_level: u8,
     /// Time-lock deadline timestamp'i.
-    pub timelock_deadline : u64,
+    pub timelock_deadline: u64,
 }
 
 impl Dilithium5InjectionPayload {
@@ -265,12 +281,12 @@ impl Dilithium5InjectionPayload {
     /// * `seed_s1`   - s1 polinom vektörü seed'i.
     /// * `seed_s2`   - s2 polinom vektörü seed'i.
     pub fn new_with_seed(
-        rho_prime : [u8; 32],
-        level     : MlDsaSecurityLevel,
-        seed_s1   : u128,
-        seed_s2   : u128,
+        rho_prime: [u8; 32],
+        level: MlDsaSecurityLevel,
+        seed_s1: u128,
+        seed_s2: u128,
     ) -> Self {
-        let config   = LatticeModuleConfig::from_security_level(level, rho_prime);
+        let config = LatticeModuleConfig::from_security_level(level, rho_prime);
         let matrix_a = expand_matrix_a(&rho_prime, config.k, config.ell, config.q);
         let lattice_commitment = compute_lattice_commitment(&matrix_a, config.q);
 
@@ -287,7 +303,11 @@ impl Dilithium5InjectionPayload {
     }
 
     /// Varsayılan panik modu payload'u — sıfır seed ile ML-DSA-87.
-    /// Yalnızca test ve soğuk başlangıç için.
+    ///
+    /// Çağıranı kalmadı: üretim akışı `from_rho_prime` kullanıyor ve sıfır
+    /// seed'e düşmek kafesi öngörülebilir kılardı. Soğuk başlangıç senaryosu
+    /// için API yüzeyinde bırakıldı.
+    #[allow(dead_code)]
     pub fn panic_mode_default() -> Self {
         Self::new_with_seed([0u8; 32], MlDsaSecurityLevel::Level87, 13, 7)
     }
@@ -317,6 +337,7 @@ impl Dilithium5InjectionPayload {
         since = "2.0.0",
         note = "Kullanın: Dilithium5InjectionPayload::new_with_seed(rho_prime, level, seed_s1, seed_s2)"
     )]
+    #[allow(dead_code)]
     pub fn new(seed_a: u128, seed_s1: u128, seed_s2: u128) -> Self {
         // Geriye uyumluluk: seed_a'yı rho_prime'ın ilk 16 baytına dönüştür
         let mut rho_prime = [0u8; 32];
@@ -345,8 +366,8 @@ impl Dilithium5InjectionPayload {
 /// edilmesini sağlar.
 #[derive(Debug)]
 pub struct QAdaptiveTrace {
-    data      : Vec<Vec<BaseElement>>,
-    trace_len : usize,
+    data: Vec<Vec<BaseElement>>,
+    trace_len: usize,
     /// Bu iz tablosunun karşılık geldiği kafes konfigürasyonu.
     pub config: LatticeModuleConfig,
 }
@@ -370,14 +391,14 @@ impl QAdaptiveTrace {
             "İz uzunluğu 2'nin kuvveti olmalı ve >= 8 olmalıdır. Alındı: {length}"
         );
 
-        let q      = payload.config.q;
-        let k      = payload.config.k;
-        let ell    = payload.config.ell;
+        let q = payload.config.q;
+        let k = payload.config.k;
+        let ell = payload.config.ell;
 
         let mut col_a_commit = Vec::with_capacity(length); // Lattice commitment (A köşegen)
-        let mut col_s1       = Vec::with_capacity(length); // s1 polinom kayan
-        let mut col_s2       = Vec::with_capacity(length); // s2 polinom kayan
-        let mut col_t        = Vec::with_capacity(length); // t = A*s1 + s2
+        let mut col_s1 = Vec::with_capacity(length); // s1 polinom kayan
+        let mut col_s2 = Vec::with_capacity(length); // s2 polinom kayan
+        let mut col_t = Vec::with_capacity(length); // t = A*s1 + s2
 
         // ── HATA E2 DÜZELTMESİ: aritmetik artık ALAN aritmetiği ──────────────
         //
@@ -402,7 +423,7 @@ impl QAdaptiveTrace {
             // rotasyonal bir temsilini sağlar.
             let row_idx = step % k;
             let col_idx = step % ell;
-            let a_elem  = BaseElement::new(payload.matrix_a[row_idx][col_idx] % q);
+            let a_elem = BaseElement::new(payload.matrix_a[row_idx][col_idx] % q);
 
             // MLWE ilişkisi: t = A * s1 + s2 — AIR kısıtıyla birebir aynı ifade.
             let t_elem = a_elem * curr_s1 + curr_s2;
@@ -437,6 +458,12 @@ impl QAdaptiveTrace {
         self.trace_len
     }
 
+    /// Son adımın dört sütunu.
+    ///
+    /// Sınır koşulları artık Winterfell tablosundan okunuyor
+    /// (`main::build_trace_for_display_and_proof`), bu yüzden çağıranı yok.
+    /// Gösterim ve hata ayıklama için API yüzeyinde bırakıldı.
+    #[allow(dead_code)]
     pub fn final_state(&self) -> [BaseElement; 4] {
         let last = self.trace_len - 1;
         [
@@ -451,7 +478,10 @@ impl QAdaptiveTrace {
     pub fn print_table(&self) {
         println!(
             "  Kafes Konfigürasyonu: {} (k={}, ℓ={}, q={})",
-            self.config.level.name(), self.config.k, self.config.ell, self.config.q
+            self.config.level.name(),
+            self.config.k,
+            self.config.ell,
+            self.config.q
         );
         println!(
             "  rho_prime: {}...",
@@ -459,7 +489,9 @@ impl QAdaptiveTrace {
         );
         println!(
             "  Matris Boyutu: {}×{} = {} eleman",
-            self.config.k, self.config.ell, self.config.matrix_elements()
+            self.config.k,
+            self.config.ell,
+            self.config.matrix_elements()
         );
         println!();
         println!("  ┌──────┬─────────────────┬──────────────┬──────────────┬──────────────┐");
@@ -468,10 +500,10 @@ impl QAdaptiveTrace {
 
         let display_rows = self.trace_len.min(8);
         for step in 0..display_rows {
-            let a  = self.get(step, 0).as_int();
+            let a = self.get(step, 0).as_int();
             let s1 = self.get(step, 1).as_int();
             let s2 = self.get(step, 2).as_int();
-            let t  = self.get(step, 3).as_int();
+            let t = self.get(step, 3).as_int();
             println!(
                 "  │ {:>4} │ {:>15} │ {:>12} │ {:>12} │ {:>12} │",
                 step, a, s1, s2, t
@@ -517,7 +549,7 @@ mod tests {
     #[test]
     fn test_rho_prime_avalanche_effect() {
         // Tek bir bit değişikliği → tamamen farklı matris (çığ etkisi testi)
-        let mut rho1 = [0xAAu8; 32];
+        let rho1 = [0xAAu8; 32];
         let rho2 = {
             let mut r = rho1;
             r[15] ^= 0x01; // Tek bit flip
@@ -528,7 +560,9 @@ mod tests {
         let m2 = expand_matrix_a(&rho2, 8, 7, ML_DSA_Q);
 
         // En az birkaç elemanın farklı olduğunu doğrula
-        let different_count: usize = m1.iter().zip(m2.iter())
+        let different_count: usize = m1
+            .iter()
+            .zip(m2.iter())
             .flat_map(|(r1, r2)| r1.iter().zip(r2.iter()))
             .filter(|(e1, e2)| e1 != e2)
             .count();
@@ -542,14 +576,15 @@ mod tests {
         let total = 8 * 7;
         assert_eq!(
             different_count, total,
-            "Çığ etkisi yetersiz: {} / {} eleman farklı", different_count, total
+            "Çığ etkisi yetersiz: {} / {} eleman farklı",
+            different_count, total
         );
     }
 
     #[test]
     fn test_mlwe_trace_generation_with_config() {
         let rho_prime = [0x12u8; 32];
-        let payload   = Dilithium5InjectionPayload::new_with_seed(
+        let payload = Dilithium5InjectionPayload::new_with_seed(
             rho_prime,
             MlDsaSecurityLevel::Level87,
             13, // seed_s1
@@ -563,24 +598,30 @@ mod tests {
         // (bkz. air.rs::evaluate_transition). Bu testin `% q` ile yazılmış
         // hâli, gösterilen izin kanıtlanan izden ayrışmasını gizliyordu.
         for step in 0..8 {
-            let a  = trace.get(step, 0);
+            let a = trace.get(step, 0);
             let s1 = trace.get(step, 1);
             let s2 = trace.get(step, 2);
-            let t  = trace.get(step, 3);
+            let t = trace.get(step, 3);
 
-            assert_eq!(
-                t, a * s1 + s2,
-                "MLWE ilişkisi adım {}'de bozuldu", step
-            );
+            assert_eq!(t, a * s1 + s2, "MLWE ilişkisi adım {}'de bozuldu", step);
         }
     }
 
     /// HATA E5 REGRESYONU — geçersiz `--level` sessizce 87'ye düşmemeli.
     #[test]
     fn test_level_parse_gecersiz_girdiyi_reddediyor() {
-        assert_eq!(MlDsaSecurityLevel::parse("44").unwrap(), MlDsaSecurityLevel::Level44);
-        assert_eq!(MlDsaSecurityLevel::parse("65").unwrap(), MlDsaSecurityLevel::Level65);
-        assert_eq!(MlDsaSecurityLevel::parse("87").unwrap(), MlDsaSecurityLevel::Level87);
+        assert_eq!(
+            MlDsaSecurityLevel::parse("44").unwrap(),
+            MlDsaSecurityLevel::Level44
+        );
+        assert_eq!(
+            MlDsaSecurityLevel::parse("65").unwrap(),
+            MlDsaSecurityLevel::Level65
+        );
+        assert_eq!(
+            MlDsaSecurityLevel::parse("87").unwrap(),
+            MlDsaSecurityLevel::Level87
+        );
 
         // Eski desen `"87" | _ => Level87` bunların hepsini 87 yapardı.
         for gecersiz in ["abc", "", "88", "-1", "44.0"] {
@@ -641,7 +682,7 @@ mod tests {
         // Geriye uyumluluk: eski new(seed_a, seed_s1, seed_s2) arayüzü
         #[allow(deprecated)]
         let payload = Dilithium5InjectionPayload::new(42, 13, 7);
-        let trace   = QAdaptiveTrace::new(&payload, 8);
+        let trace = QAdaptiveTrace::new(&payload, 8);
 
         // Bu iddia eskiden `trace.get(0, 3).as_int() < ML_DSA_Q` idi.
         //
@@ -649,13 +690,13 @@ mod tests {
         // hata E2'nin kendisini sabitliyordu. AIR kısıtı `% q` uygulamaz
         // (`next[3] = next[0]*next[1] + next[2]`), dolayısıyla t doğal olarak
         // q'yu aşar. Doğru değişmez, MLWE ilişkisinin kendisidir:
-        let a  = trace.get(0, 0);
+        let a = trace.get(0, 0);
         let s1 = trace.get(0, 1);
         let s2 = trace.get(0, 2);
         assert_eq!(trace.get(0, 3), a * s1 + s2);
 
         // A, s1 ve s2 girdileri ise hâlâ alan içinde olmalı.
-        assert!(a.as_int()  < ML_DSA_Q);
+        assert!(a.as_int() < ML_DSA_Q);
         assert!(s1.as_int() < ML_DSA_Q);
         assert!(s2.as_int() < ML_DSA_Q);
     }

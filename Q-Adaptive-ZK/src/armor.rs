@@ -55,17 +55,17 @@ pub const VARSAYILAN_TAU: f64 = 75.0;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ArmorDecision {
     /// Uygulanacak ML-DSA kademesi.
-    pub level          : MlDsaSecurityLevel,
+    pub level: MlDsaSecurityLevel,
     /// STARK kanıtı üretilmeli mi?
-    pub proof_required : bool,
+    pub proof_required: bool,
     /// Zincire ve JSON'a yazılan durum metni.
-    pub status         : &'static str,
+    pub status: &'static str,
     /// Riskin τ'yu aşma miktarı (aşmıyorsa 0.0).
-    pub asim           : f64,
+    pub asim: f64,
 }
 
 /// Panik durumunun metinsel karşılığı — JSON ve zincir tarafıyla paylaşılır.
-pub const STATUS_PANIC : &str = "PANIC_MODE_ACTIVATED";
+pub const STATUS_PANIC: &str = "PANIC_MODE_ACTIVATED";
 /// Normal durumun metinsel karşılığı.
 pub const STATUS_NORMAL: &str = "NORMAL";
 
@@ -94,19 +94,19 @@ pub fn decide(risk: f64, tau: f64, taban: MlDsaSecurityLevel) -> ArmorDecision {
     // sessizce "normal" kararına düşmek demektir. Açıkça panik tarafına al.
     if risk.is_nan() || tau.is_nan() {
         return ArmorDecision {
-            level          : yukseği_al(MlDsaSecurityLevel::Level87, taban),
-            proof_required : true,
-            status         : STATUS_PANIC,
-            asim           : 0.0,
+            level: yukseği_al(MlDsaSecurityLevel::Level87, taban),
+            proof_required: true,
+            status: STATUS_PANIC,
+            asim: 0.0,
         };
     }
 
     if risk < tau {
         return ArmorDecision {
-            level          : taban,
-            proof_required : false,
-            status         : STATUS_NORMAL,
-            asim           : 0.0,
+            level: taban,
+            proof_required: false,
+            status: STATUS_NORMAL,
+            asim: 0.0,
         };
     }
 
@@ -121,9 +121,9 @@ pub fn decide(risk: f64, tau: f64, taban: MlDsaSecurityLevel) -> ArmorDecision {
     };
 
     ArmorDecision {
-        level          : yukseği_al(onerilen, taban),
-        proof_required : true,
-        status         : STATUS_PANIC,
+        level: yukseği_al(onerilen, taban),
+        proof_required: true,
+        status: STATUS_PANIC,
         asim,
     }
 }
@@ -171,7 +171,10 @@ mod tests {
     #[test]
     fn tau_karari_gercekten_etkiliyor() {
         assert!(decide(80.0, 75.0, TABAN).proof_required, "80 > 75 → panik");
-        assert!(!decide(80.0, 85.0, TABAN).proof_required, "80 < 85 → normal");
+        assert!(
+            !decide(80.0, 85.0, TABAN).proof_required,
+            "80 < 85 → normal"
+        );
     }
 
     #[test]
@@ -187,16 +190,23 @@ mod tests {
     fn asim_kademeyi_belirliyor() {
         assert_eq!(decide(76.0, 75.0, TABAN).level, MlDsaSecurityLevel::Level44); // aşım 1
         assert_eq!(decide(80.0, 75.0, TABAN).level, MlDsaSecurityLevel::Level65); // aşım 5
-        assert_eq!(decide(90.0, 75.0, TABAN).level, MlDsaSecurityLevel::Level87); // aşım 15
+        assert_eq!(decide(90.0, 75.0, TABAN).level, MlDsaSecurityLevel::Level87);
+        // aşım 15
     }
 
     #[test]
     fn kademe_sinirlari_tam_degerlerde() {
         // Sınırlar kapalı aralık: >= 5 ve >= 15.
-        assert_eq!(decide(79.99, 75.0, TABAN).level, MlDsaSecurityLevel::Level44);
-        assert_eq!(decide(80.0,  75.0, TABAN).level, MlDsaSecurityLevel::Level65);
-        assert_eq!(decide(89.99, 75.0, TABAN).level, MlDsaSecurityLevel::Level65);
-        assert_eq!(decide(90.0,  75.0, TABAN).level, MlDsaSecurityLevel::Level87);
+        assert_eq!(
+            decide(79.99, 75.0, TABAN).level,
+            MlDsaSecurityLevel::Level44
+        );
+        assert_eq!(decide(80.0, 75.0, TABAN).level, MlDsaSecurityLevel::Level65);
+        assert_eq!(
+            decide(89.99, 75.0, TABAN).level,
+            MlDsaSecurityLevel::Level65
+        );
+        assert_eq!(decide(90.0, 75.0, TABAN).level, MlDsaSecurityLevel::Level87);
     }
 
     /// BULGU E4 REGRESYONU — zırh tabanın altına inemez.
@@ -225,7 +235,9 @@ mod tests {
                 assert!(
                     karar.level.rank() >= taban.rank(),
                     "risk={} taban={} iken kademe düştü: {}",
-                    risk, taban.name(), karar.level.name()
+                    risk,
+                    taban.name(),
+                    karar.level.name()
                 );
             }
         }

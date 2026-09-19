@@ -77,8 +77,8 @@
 
 use winterfell::{
     math::{fields::f128::BaseElement, FieldElement, ToElements},
-    Air, AirContext, Assertion, BatchingMethod, EvaluationFrame,
-    FieldExtension, ProofOptions, TraceInfo, TransitionConstraintDegree,
+    Air, AirContext, Assertion, BatchingMethod, EvaluationFrame, FieldExtension, ProofOptions,
+    TraceInfo, TransitionConstraintDegree,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -122,8 +122,8 @@ pub fn get_proof_options() -> ProofOptions {
         FRI_BLOWUP_FACTOR,
         GRINDING_FACTOR,
         FieldExtension::None,
-        8,                          // FRI folding factor
-        31,                         // FRI remainder max degree
+        8,  // FRI folding factor
+        31, // FRI remainder max degree
         BatchingMethod::Linear,
         BatchingMethod::Linear,
     )
@@ -186,15 +186,19 @@ impl ToElements<BaseElement> for QAdaptivePublicInputs {
 ///   final_state[0] (A_commit son adım) = beklenen değer.
 ///   Bu, off-chain hesaplanan NTT(INTT(f)) = f özdeşliğinin on-chain analitiği.
 pub struct QAdaptiveAir {
-    context    : AirContext<BaseElement>,
-    pub_inputs : QAdaptivePublicInputs,
+    context: AirContext<BaseElement>,
+    pub_inputs: QAdaptivePublicInputs,
 }
 
 impl Air for QAdaptiveAir {
-    type BaseField    = BaseElement;
+    type BaseField = BaseElement;
     type PublicInputs = QAdaptivePublicInputs;
 
-    fn new(trace_info: TraceInfo, pub_inputs: QAdaptivePublicInputs, options: ProofOptions) -> Self {
+    fn new(
+        trace_info: TraceInfo,
+        pub_inputs: QAdaptivePublicInputs,
+        options: ProofOptions,
+    ) -> Self {
         // Geçiş kısıtlaması dereceleri:
         //
         //   A_commit (sütun 0) için geçiş KISITI YOK:
@@ -224,7 +228,10 @@ impl Air for QAdaptiveAir {
         let num_assertions = 8;
         let context = AirContext::new(trace_info, degrees, num_assertions, options);
 
-        Self { context, pub_inputs }
+        Self {
+            context,
+            pub_inputs,
+        }
     }
 
     /// MLWE geçiş kısıtlarını değerlendirir.
@@ -250,12 +257,12 @@ impl Air for QAdaptiveAir {
     ///   tam uyumludur.
     fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField>>(
         &self,
-        frame  : &EvaluationFrame<E>,
+        frame: &EvaluationFrame<E>,
         _period: &[E],
-        result : &mut [E],
+        result: &mut [E],
     ) {
         let current = frame.current();
-        let next    = frame.next();
+        let next = frame.next();
 
         // ── Kısıt Felsefesi ──────────────────────────────────────────────────
         // Sütun 0 (A_commit) için burada geçiş kısıtı YOKTUR.
@@ -310,7 +317,6 @@ impl Air for QAdaptiveAir {
             Assertion::single(2, 0, self.pub_inputs.start_state[2]),
             // start_state[3]: t başlangıç değeri = A[0][0] * s1 + s2
             Assertion::single(3, 0, self.pub_inputs.start_state[3]),
-
             // ── Bitiş sınır iddiaları (son adım) ─────────────────────────────
             // final_state[0]: Son kafes taahhüdü — NTT roundtrip doğrulama noktası.
             //   Prover, off-chain NTT(INTT(A_last)) = A_last hesaplar.

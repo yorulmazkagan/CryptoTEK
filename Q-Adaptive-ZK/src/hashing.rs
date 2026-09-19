@@ -66,10 +66,10 @@ const DOMAIN_LATTICE_COMMIT: &[u8] = b"Q-ADAPTIVE/v1/lattice-commit";
 /// * `user_op_hash`  - Bu kanıtın bağlandığı UserOperation özeti (boş olabilir).
 /// * `extra_entropy` - İsteğe bağlı taze entropi. `None` ise çıktı deterministik.
 pub fn derive_rho_prime(
-    ai_risk_score : f64,
-    epoch_ns      : u64,
-    user_op_hash  : &[u8],
-    extra_entropy : Option<&[u8; 32]>,
+    ai_risk_score: f64,
+    epoch_ns: u64,
+    user_op_hash: &[u8],
+    extra_entropy: Option<&[u8; 32]>,
 ) -> [u8; 32] {
     let mut hasher = Blake3Hasher::new();
 
@@ -195,8 +195,7 @@ fn sample_field_element(rho: &[u8; 32], row_idx: u16, col_idx: u16, q: u128) -> 
     loop {
         reader.read(&mut block);
         // 24-bit little-endian tamsayı
-        let candidate =
-            (block[0] as u128) | ((block[1] as u128) << 8) | ((block[2] as u128) << 16);
+        let candidate = (block[0] as u128) | ((block[1] as u128) << 8) | ((block[2] as u128) << 16);
         if candidate < q {
             return candidate;
         }
@@ -252,7 +251,10 @@ mod tests {
     fn rho_prime_tam_deterministik() {
         let a = derive_rho_prime(92.4, 1_700_000_000_000_000_000, b"0xdeadbeef", None);
         let b = derive_rho_prime(92.4, 1_700_000_000_000_000_000, b"0xdeadbeef", None);
-        assert_eq!(a, b, "Aynı girdi aynı ρ''yü vermeli — süreç kimliği karışmamalı");
+        assert_eq!(
+            a, b,
+            "Aynı girdi aynı ρ''yü vermeli — süreç kimliği karışmamalı"
+        );
 
         // Bilinen bir vektörü sabitle: türetme kuralı sessizce değişirse kırılır.
         assert_ne!(a, [0u8; 32], "ρ' sıfır dizisi olmamalı");
@@ -262,9 +264,21 @@ mod tests {
     fn rho_prime_her_girdiye_duyarli() {
         let temel = derive_rho_prime(92.4, 1_000, b"op", None);
 
-        assert_ne!(temel, derive_rho_prime(92.5, 1_000, b"op", None), "risk skoru");
-        assert_ne!(temel, derive_rho_prime(92.4, 1_001, b"op", None), "dönem damgası");
-        assert_ne!(temel, derive_rho_prime(92.4, 1_000, b"op2", None), "userOpHash");
+        assert_ne!(
+            temel,
+            derive_rho_prime(92.5, 1_000, b"op", None),
+            "risk skoru"
+        );
+        assert_ne!(
+            temel,
+            derive_rho_prime(92.4, 1_001, b"op", None),
+            "dönem damgası"
+        );
+        assert_ne!(
+            temel,
+            derive_rho_prime(92.4, 1_000, b"op2", None),
+            "userOpHash"
+        );
         assert_ne!(
             temel,
             derive_rho_prime(92.4, 1_000, b"op", Some(&[7u8; 32])),
@@ -295,7 +309,11 @@ mod tests {
             .filter(|(a, b)| a != b)
             .count();
 
-        assert_eq!(farkli, 56, "56 hücrenin 56'sı değişmeli, {} değişti", farkli);
+        assert_eq!(
+            farkli, 56,
+            "56 hücrenin 56'sı değişmeli, {} değişti",
+            farkli
+        );
     }
 
     #[test]

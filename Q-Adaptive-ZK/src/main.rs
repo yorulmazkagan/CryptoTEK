@@ -22,20 +22,19 @@
 //   ./q-adaptive-zk --rho-prime <64-char-hex># API'den gelen rho_prime kullan
 // =============================================================================
 
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use std::fs;
 use std::env;
+use std::fs;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use winter_verifier::verify;
 use winterfell::{
     crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree},
     math::{fields::f128::BaseElement, FieldElement},
     matrix::ColMatrix,
     AcceptableOptions, AuxRandElements, CompositionPoly, CompositionPolyTrace,
-    DefaultConstraintCommitment, DefaultConstraintEvaluator, DefaultTraceLde,
-    PartitionOptions, Proof, ProofOptions, Prover, StarkDomain,
-    Trace, TracePolyTable, TraceTable,
+    DefaultConstraintCommitment, DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions,
+    Proof, ProofOptions, Prover, StarkDomain, Trace, TracePolyTable, TraceTable,
 };
-use winter_verifier::verify;
 
 // Proje modülleri
 mod air;
@@ -47,16 +46,16 @@ mod pqc;
 mod trace;
 
 use air::{get_proof_options, QAdaptiveAir, QAdaptivePublicInputs};
+use bridge::export_proof_payload;
 use pipeline::{RunOutcome, RunRequest};
 use trace::{MlDsaSecurityLevel, QAdaptiveTrace, TRACE_LENGTH, TRACE_WIDTH};
-use bridge::export_proof_payload;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sabitler
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SEPARATOR : &str = "=================================================================";
-const THIN_SEP  : &str = "-----------------------------------------------------------------";
+const SEPARATOR: &str = "=================================================================";
+const THIN_SEP: &str = "-----------------------------------------------------------------";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Rho-Prime Seed Üretimi (AI Entropi Köprüsü)
@@ -120,12 +119,12 @@ pub fn parse_rho_prime_hex(hex_str: &str) -> Result<[u8; 32], String> {
     if trimmed.len() != 64 {
         return Err(format!(
             "rho_prime hex {} karakter olmalı, {} alındı",
-            64, trimmed.len()
+            64,
+            trimmed.len()
         ));
     }
 
-    let bytes = hex::decode(trimmed)
-        .map_err(|e| format!("Geçersiz hex formatı: {}", e))?;
+    let bytes = hex::decode(trimmed).map_err(|e| format!("Geçersiz hex formatı: {}", e))?;
 
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&bytes);
@@ -147,18 +146,18 @@ impl QAdaptiveProver {
 }
 
 impl Prover for QAdaptiveProver {
-    type BaseField    = BaseElement;
-    type Air          = QAdaptiveAir;
-    type Trace        = TraceTable<Self::BaseField>;
-    type HashFn       = Blake3_256<Self::BaseField>;
-    type VC           = MerkleTree<Self::HashFn>;
-    type RandomCoin   = DefaultRandomCoin<Self::HashFn>;
-    type TraceLde<E: FieldElement<BaseField = Self::BaseField>>
-                      = DefaultTraceLde<E, Self::HashFn, Self::VC>;
-    type ConstraintCommitment<E: FieldElement<BaseField = Self::BaseField>>
-                      = DefaultConstraintCommitment<E, Self::HashFn, Self::VC>;
-    type ConstraintEvaluator<'a, E: FieldElement<BaseField = Self::BaseField>>
-                      = DefaultConstraintEvaluator<'a, Self::Air, E>;
+    type BaseField = BaseElement;
+    type Air = QAdaptiveAir;
+    type Trace = TraceTable<Self::BaseField>;
+    type HashFn = Blake3_256<Self::BaseField>;
+    type VC = MerkleTree<Self::HashFn>;
+    type RandomCoin = DefaultRandomCoin<Self::HashFn>;
+    type TraceLde<E: FieldElement<BaseField = Self::BaseField>> =
+        DefaultTraceLde<E, Self::HashFn, Self::VC>;
+    type ConstraintCommitment<E: FieldElement<BaseField = Self::BaseField>> =
+        DefaultConstraintCommitment<E, Self::HashFn, Self::VC>;
+    type ConstraintEvaluator<'a, E: FieldElement<BaseField = Self::BaseField>> =
+        DefaultConstraintEvaluator<'a, Self::Air, E>;
 
     fn get_pub_inputs(&self, trace: &Self::Trace) -> QAdaptivePublicInputs {
         let last_step = trace.length() - 1;
@@ -184,20 +183,20 @@ impl Prover for QAdaptiveProver {
 
     fn new_trace_lde<E: FieldElement<BaseField = Self::BaseField>>(
         &self,
-        trace_info       : &winterfell::TraceInfo,
-        main_trace       : &ColMatrix<Self::BaseField>,
-        domain           : &StarkDomain<Self::BaseField>,
-        partition_option : PartitionOptions,
+        trace_info: &winterfell::TraceInfo,
+        main_trace: &ColMatrix<Self::BaseField>,
+        domain: &StarkDomain<Self::BaseField>,
+        partition_option: PartitionOptions,
     ) -> (Self::TraceLde<E>, TracePolyTable<E>) {
         DefaultTraceLde::new(trace_info, main_trace, domain, partition_option)
     }
 
     fn build_constraint_commitment<E: FieldElement<BaseField = Self::BaseField>>(
         &self,
-        composition_poly_trace            : CompositionPolyTrace<E>,
+        composition_poly_trace: CompositionPolyTrace<E>,
         num_constraint_composition_columns: usize,
-        domain                            : &StarkDomain<Self::BaseField>,
-        partition_options                 : PartitionOptions,
+        domain: &StarkDomain<Self::BaseField>,
+        partition_options: PartitionOptions,
     ) -> (Self::ConstraintCommitment<E>, CompositionPoly<E>) {
         DefaultConstraintCommitment::new(
             composition_poly_trace,
@@ -209,9 +208,9 @@ impl Prover for QAdaptiveProver {
 
     fn new_evaluator<'a, E: FieldElement<BaseField = Self::BaseField>>(
         &self,
-        air                      : &'a Self::Air,
-        aux_rand_elements        : Option<AuxRandElements<E>>,
-        composition_coefficients : winterfell::ConstraintCompositionCoefficients<E>,
+        air: &'a Self::Air,
+        aux_rand_elements: Option<AuxRandElements<E>>,
+        composition_coefficients: winterfell::ConstraintCompositionCoefficients<E>,
     ) -> Self::ConstraintEvaluator<'a, E> {
         DefaultConstraintEvaluator::new(air, aux_rand_elements, composition_coefficients)
     }
@@ -247,7 +246,10 @@ fn print_ai_signal(request: &RunRequest, decision: &armor::ArmorDecision) {
 
     println!("  Analiz Edilen Anomali Skoru : {:.2}", request.risk_score);
     println!("  Dinamik Eşik τ(t)           : {:.2}", request.tau);
-    println!("  Taban Zırh                  : {}", request.baseline.name());
+    println!(
+        "  Taban Zırh                  : {}",
+        request.baseline.name()
+    );
     println!("  Sistem Durumu               : {}", decision.status);
 
     if decision.proof_required {
@@ -277,27 +279,61 @@ fn build_trace_for_display_and_proof(outcome: &RunOutcome) -> TraceTable<BaseEle
         .as_ref()
         .expect("kanıt gerekli koşuda payload üretilmiş olmalı");
 
-    println!("  Güvenlik Seviyesi           : {}", payload.config.level.name());
+    println!(
+        "  Güvenlik Seviyesi           : {}",
+        payload.config.level.name()
+    );
     println!(
         "  Kafes Boyutu                : {}×{} = {} eleman",
-        payload.config.k, payload.config.ell, payload.config.matrix_elements()
+        payload.config.k,
+        payload.config.ell,
+        payload.config.matrix_elements()
     );
-    println!("  rho_prime (ilk 8 byte)      : {}", hex::encode(&outcome.rho_prime[..8]));
+    println!(
+        "  rho_prime (ilk 8 byte)      : {}",
+        hex::encode(&outcome.rho_prime[..8])
+    );
     println!("  Kafes Taahhüdü (A_commit_0) : {}", payload.matrix_a[0][0]);
-    println!("  İz Tablosu                  : {} Sütun, {} Satır", TRACE_WIDTH, TRACE_LENGTH);
+    println!(
+        "  İz Tablosu                  : {} Sütun, {} Satır",
+        TRACE_WIDTH, TRACE_LENGTH
+    );
     println!(
         "  Koşu Türü                   : {}",
-        if outcome.deterministic { "deterministik" } else { "taze entropili" }
+        if outcome.deterministic {
+            "deterministik"
+        } else {
+            "taze entropili"
+        }
     );
 
     if let Some(kayit) = &outcome.pqc {
         println!();
         println!("  ── Gerçek ML-DSA İmzası (fips204) ──");
-        println!("  Açık Anahtar                : {} bayt", kayit.public_key_len);
-        println!("  Gizli Anahtar               : {} bayt", kayit.secret_key_len);
-        println!("  İmza                        : {} bayt", kayit.signature_len);
-        println!("  İmza (ilk 16 bayt)          : {}...", kayit.signature_prefix_hex);
-        println!("  Doğrulama                   : {}", if kayit.verified { "✅ GEÇTİ" } else { "❌ KALDI" });
+        println!(
+            "  Açık Anahtar                : {} bayt",
+            kayit.public_key_len
+        );
+        println!(
+            "  Gizli Anahtar               : {} bayt",
+            kayit.secret_key_len
+        );
+        println!(
+            "  İmza                        : {} bayt",
+            kayit.signature_len
+        );
+        println!(
+            "  İmza (ilk 16 bayt)          : {}...",
+            kayit.signature_prefix_hex
+        );
+        println!(
+            "  Doğrulama                   : {}",
+            if kayit.verified {
+                "✅ GEÇTİ"
+            } else {
+                "❌ KALDI"
+            }
+        );
     }
 
     println!();
@@ -315,23 +351,28 @@ fn build_trace_for_display_and_proof(outcome: &RunOutcome) -> TraceTable<BaseEle
 /// # Returns
 /// `Ok(Proof)` başarılıysa, `Err(String)` kısıt ihlali veya prover hatası.
 fn generate_proof(
-    trace  : TraceTable<BaseElement>,
+    trace: TraceTable<BaseElement>,
     options: ProofOptions,
 ) -> Result<(Proof, f64), String> {
     println!("[ADIM 3] STARK Kanıtı Üretiliyor (Prover)...");
     println!("{THIN_SEP}");
 
-    let prover  = QAdaptiveProver::new(options);
+    let prover = QAdaptiveProver::new(options);
     let t_start = Instant::now();
     // Güvenlik: .expect() kaldırıldı. Prover hatası (kısıt ihlali vb.) sonaç
     // program sonlanmasına değil, çağıran koda iletilen Err'ye dönüştürülür.
-    let proof   = prover.prove(trace).map_err(|e| format!("STARK prover hatası: {:?}", e))?;
+    let proof = prover
+        .prove(trace)
+        .map_err(|e| format!("STARK prover hatası: {:?}", e))?;
     // Süre payload'a yazılır; raporlarda sabitlenmiş "18.52 ms" değeri tek bir
     // makinedeki tek bir koşudan geliyordu (bkz. bridge::StarkMetrics).
     let elapsed_ms = t_start.elapsed().as_secs_f64() * 1000.0;
 
     println!("  ✅ Prover Çalışması Tamamlandı ({:.2} ms)", elapsed_ms);
-    println!("  Kanıt Ham Boyutu            : {:.2} KB", proof.to_bytes().len() as f64 / 1024.0);
+    println!(
+        "  Kanıt Ham Boyutu            : {:.2} KB",
+        proof.to_bytes().len() as f64 / 1024.0
+    );
     println!();
 
     Ok((proof, elapsed_ms))
@@ -344,7 +385,7 @@ fn verify_proof(proof: Proof, pub_inputs: QAdaptivePublicInputs) -> Proof {
     // Güvenlik seviyesi tek yerden gelir (air::STARK_SECURITY_BITS).
     // Buraya elle "80" yazmak, README'nin "96" demesiyle aynı sınıf hatadır.
     let acceptable = AcceptableOptions::MinConjecturedSecurity(air::STARK_SECURITY_BITS);
-    let t_start  = Instant::now();
+    let t_start = Instant::now();
 
     let result = verify::<
         QAdaptiveAir,
@@ -356,7 +397,10 @@ fn verify_proof(proof: Proof, pub_inputs: QAdaptivePublicInputs) -> Proof {
     let elapsed_ms = t_start.elapsed().as_millis();
 
     if result.is_ok() {
-        println!("  ✅ KANIT DOĞRULANDI! İç Bütünlük Sağlandı ({} ms)", elapsed_ms);
+        println!(
+            "  ✅ KANIT DOĞRULANDI! İç Bütünlük Sağlandı ({} ms)",
+            elapsed_ms
+        );
     } else {
         println!("  ❌ KANIT DOĞRULANAMADI! Hata: {:?}", result.err());
         std::process::exit(1);
@@ -367,31 +411,31 @@ fn verify_proof(proof: Proof, pub_inputs: QAdaptivePublicInputs) -> Proof {
 }
 
 fn export_payload(
-    request    : &RunRequest,
-    outcome    : &RunOutcome,
-    proof      : Proof,
-    pub_inputs : QAdaptivePublicInputs,
-    prover_ms  : f64,
+    request: &RunRequest,
+    outcome: &RunOutcome,
+    proof: Proof,
+    pub_inputs: QAdaptivePublicInputs,
+    prover_ms: f64,
 ) {
     println!("[ADIM 5] Solidity Akıllı Sözleşme Payload'u Oluşturuluyor...");
     println!("{THIN_SEP}");
 
-    let filepath    = "proof_payload.json";
+    let filepath = "proof_payload.json";
     let proof_bytes = proof.to_bytes();
-    let status      = outcome.decision.status;
-    let risk_score  = request.risk_score;
-    let rho_prime   = &outcome.rho_prime;
+    let status = outcome.decision.status;
+    let risk_score = request.risk_score;
+    let rho_prime = &outcome.rho_prime;
     let security_level = outcome.decision.level.name();
 
     // Ölçümler — hepsi bu koşudan, hiçbiri elle yazılmamış.
     let pqc_ozet = outcome.pqc.as_ref().map(|k| bridge::PqcSummary {
-        tier                     : k.level.name().to_string(),
-        public_key_bytes         : k.public_key_len,
-        secret_key_bytes         : k.secret_key_len,
-        signature_bytes          : k.signature_len,
+        tier: k.level.name().to_string(),
+        public_key_bytes: k.public_key_len,
+        secret_key_bytes: k.secret_key_len,
+        signature_bytes: k.signature_len,
         public_key_commitment_hex: hex::encode(k.public_key_commitment),
-        signature_prefix_hex     : k.signature_prefix_hex.clone(),
-        signature_verified       : k.verified,
+        signature_prefix_hex: k.signature_prefix_hex.clone(),
+        signature_verified: k.verified,
     });
 
     // Calldata tasarrufu, bu kademedeki GERÇEK imza boyutundan hesaplanır.
@@ -404,36 +448,52 @@ fn export_payload(
     });
 
     let extras = bridge::PayloadExtras {
-        tau          : request.tau,
-        run_id       : request.run_id.clone(),
+        tau: request.tau,
+        run_id: request.run_id.clone(),
         deterministic: outcome.deterministic,
-        stark        : bridge::StarkMetrics {
-            proof_bytes              : proof_bytes.len(),
+        stark: bridge::StarkMetrics {
+            proof_bytes: proof_bytes.len(),
             prover_ms,
             conjectured_security_bits: air::STARK_SECURITY_BITS,
-            field                    : "f128".to_string(),
-            num_queries              : air::FRI_NUM_QUERIES,
-            blowup_factor            : air::FRI_BLOWUP_FACTOR,
+            field: "f128".to_string(),
+            num_queries: air::FRI_NUM_QUERIES,
+            blowup_factor: air::FRI_BLOWUP_FACTOR,
         },
-        pqc      : pqc_ozet,
+        pqc: pqc_ozet,
         calldata,
     };
 
     if let Some(c) = &extras.calldata {
         println!("  Calldata Tasarrufu          : %{:.2}", c.savings_pct);
         println!("  Formül                      : {}", c.formula);
-        println!("  ECDSA partisi ({} imza)     : {} bayt{}",
-            c.batch_size, c.ecdsa_batch_bytes,
-            if c.beats_ecdsa { "" } else { "  ← ECDSA calldata'da daha küçük" });
+        println!(
+            "  ECDSA partisi ({} imza)     : {} bayt{}",
+            c.batch_size,
+            c.ecdsa_batch_bytes,
+            if c.beats_ecdsa {
+                ""
+            } else {
+                "  ← ECDSA calldata'da daha küçük"
+            }
+        );
     }
 
-    match export_proof_payload(status, risk_score, rho_prime, security_level, &proof_bytes, &pub_inputs, extras, filepath) {
+    match export_proof_payload(
+        status,
+        risk_score,
+        rho_prime,
+        security_level,
+        &proof_bytes,
+        &pub_inputs,
+        extras,
+        filepath,
+    ) {
         Ok(_) => {
             // Güvenlik: fs::metadata().unwrap() panic'i kaldırıldı.
             // Dosya boyutu alınamazsa (yarış koşulu, izin sorunu) uyarı basılır.
             match fs::metadata(filepath) {
                 Ok(meta) => {
-                    let size_kb  = meta.len() as f64 / 1024.0;
+                    let size_kb = meta.len() as f64 / 1024.0;
                     println!("  ✅ JSON Payload Başarıyla Dışa Aktarıldı!");
                     println!("  Dosya Yolu      : ./{}", filepath);
                     println!("  JSON Boyutu     : {:.2} KB", size_kb);
@@ -445,7 +505,7 @@ fn export_payload(
                     println!("  rho_prime_hex   : {}...", hex::encode(&rho_prime[..8]));
                 }
             }
-        },
+        }
         Err(e) => {
             println!("  ❌ JSON Dışa Aktarma Hatası: {}", e);
         }
@@ -459,9 +519,18 @@ fn print_summary(elapsed_total_ms: u128, risk_score: f64, level: &str, rho_prime
     println!("{SEPARATOR}");
     println!();
     println!("  🌐  Sistem Entegrasyon Özeti:");
-    println!("    AI Modülü           : Risk Tespiti Başarılı (Skor: {:.2})", risk_score);
-    println!("    PQC Modülü          : {} MLWE İzleme & Kanıtlama Başarılı", level);
-    println!("    Rho-Prime Seed (ρ') : {}...", hex::encode(&rho_prime[..16]));
+    println!(
+        "    AI Modülü           : Risk Tespiti Başarılı (Skor: {:.2})",
+        risk_score
+    );
+    println!(
+        "    PQC Modülü          : {} MLWE İzleme & Kanıtlama Başarılı",
+        level
+    );
+    println!(
+        "    Rho-Prime Seed (ρ') : {}...",
+        hex::encode(&rho_prime[..16])
+    );
     println!("    Köprü               : JSON Export Başarılı (proof_payload.json)");
     println!("    Toplam Gecikme      : {} ms", elapsed_total_ms);
     println!();
@@ -647,7 +716,10 @@ fn main() {
         println!();
         let total_ms = t_total.elapsed().as_millis();
         println!("{SEPARATOR}");
-        println!("  Q-ADAPTIVE ZK GUARD — Normal Mod Tamamlandı ({} ms)", total_ms);
+        println!(
+            "  Q-ADAPTIVE ZK GUARD — Normal Mod Tamamlandı ({} ms)",
+            total_ms
+        );
         println!("{SEPARATOR}");
         return;
     }
@@ -661,12 +733,16 @@ fn main() {
     let last_step = trace.length() - 1;
     let pub_inputs = QAdaptivePublicInputs {
         start_state: [
-            trace.get(0, 0), trace.get(1, 0),
-            trace.get(2, 0), trace.get(3, 0),
+            trace.get(0, 0),
+            trace.get(1, 0),
+            trace.get(2, 0),
+            trace.get(3, 0),
         ],
         final_state: [
-            trace.get(0, last_step), trace.get(1, last_step),
-            trace.get(2, last_step), trace.get(3, last_step),
+            trace.get(0, last_step),
+            trace.get(1, last_step),
+            trace.get(2, last_step),
+            trace.get(3, last_step),
         ],
     };
     let pub_inputs_verify = pub_inputs.clone();
@@ -676,7 +752,7 @@ fn main() {
 
     // Adım 3: STARK Kanıtı Üret (Result propagasyon — program crash yok)
     let (proof, prover_ms) = match generate_proof(trace, options) {
-        Ok(p)  => p,
+        Ok(p) => p,
         Err(e) => {
             eprintln!("[ERROR][Q-ZK] STARK kanıt üretimi başarısız: {}", e);
             eprintln!("[ERROR][Q-ZK] Pipeline durduruldu. proof_payload.json güncellenmedi.");
@@ -688,12 +764,17 @@ fn main() {
     let verified_proof = verify_proof(proof, pub_inputs_verify);
 
     // Adım 5: Köprü (JSON Export — ölçümler dahil)
-    export_payload(&request, &outcome, verified_proof, pub_inputs_export, prover_ms);
+    export_payload(
+        &request,
+        &outcome,
+        verified_proof,
+        pub_inputs_export,
+        prover_ms,
+    );
 
     let total_ms = t_total.elapsed().as_millis();
     print_summary(total_ms, request.risk_score, level_name, &outcome.rho_prime);
 }
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entegrasyon Testleri
@@ -738,33 +819,37 @@ mod tests {
     #[test]
     fn test_guvenlik_biti_gercekten_uygulaniyor() {
         let istek = RunRequest {
-            risk_score   : 95.0,
-            tau          : 75.0,
-            baseline     : MlDsaSecurityLevel::Level44,
-            user_op_hash : "0xguvenlik".to_string(),
-            epoch_ns     : 7_000_000_000,
-            run_id       : "guvenlik".to_string(),
+            risk_score: 95.0,
+            tau: 75.0,
+            baseline: MlDsaSecurityLevel::Level44,
+            user_op_hash: "0xguvenlik".to_string(),
+            epoch_ns: 7_000_000_000,
+            run_id: "guvenlik".to_string(),
             fresh_entropy: None,
-            rho_override : None,
+            rho_override: None,
         };
 
         let outcome = pipeline::run(&istek).unwrap();
-        let trace   = pipeline::trace_table_for(&outcome).unwrap();
+        let trace = pipeline::trace_table_for(&outcome).unwrap();
 
-        let last_step  = trace.length() - 1;
+        let last_step = trace.length() - 1;
         let pub_inputs = QAdaptivePublicInputs {
             start_state: [
-                trace.get(0, 0), trace.get(1, 0),
-                trace.get(2, 0), trace.get(3, 0),
+                trace.get(0, 0),
+                trace.get(1, 0),
+                trace.get(2, 0),
+                trace.get(3, 0),
             ],
             final_state: [
-                trace.get(0, last_step), trace.get(1, last_step),
-                trace.get(2, last_step), trace.get(3, last_step),
+                trace.get(0, last_step),
+                trace.get(1, last_step),
+                trace.get(2, last_step),
+                trace.get(3, last_step),
             ],
         };
 
         let prover = QAdaptiveProver::new(get_proof_options());
-        let proof  = prover.prove(trace).unwrap();
+        let proof = prover.prove(trace).unwrap();
 
         type H = Blake3_256<BaseElement>;
 
@@ -772,19 +857,24 @@ mod tests {
         let ilan_edilen = AcceptableOptions::MinConjecturedSecurity(air::STARK_SECURITY_BITS);
         assert!(
             winter_verifier::verify::<QAdaptiveAir, H, DefaultRandomCoin<H>, MerkleTree<H>>(
-                proof.clone(), pub_inputs.clone(), &ilan_edilen
-            ).is_ok(),
+                proof.clone(),
+                pub_inputs.clone(),
+                &ilan_edilen
+            )
+            .is_ok(),
             "Kanıt ilan edilen {} bit seviyesinde doğrulanamadı",
             air::STARK_SECURITY_BITS
         );
 
         // İlan edilenin üstünde KALMALI — aksi hâlde sabit gereğinden düşük.
-        let cok_yuksek =
-            AcceptableOptions::MinConjecturedSecurity(air::STARK_SECURITY_BITS + 40);
+        let cok_yuksek = AcceptableOptions::MinConjecturedSecurity(air::STARK_SECURITY_BITS + 40);
         assert!(
             winter_verifier::verify::<QAdaptiveAir, H, DefaultRandomCoin<H>, MerkleTree<H>>(
-                proof, pub_inputs, &cok_yuksek
-            ).is_err(),
+                proof,
+                pub_inputs,
+                &cok_yuksek
+            )
+            .is_err(),
             "Kanıt {} bit seviyesinde de geçti — STARK_SECURITY_BITS düşük yazılmış olabilir",
             air::STARK_SECURITY_BITS + 40
         );
@@ -819,41 +909,48 @@ mod tests {
     #[test]
     fn test_full_bridge_integration_with_rho_prime() {
         let istek = RunRequest {
-            risk_score   : 95.0,
-            tau          : 75.0,
-            baseline     : MlDsaSecurityLevel::Level44,
-            user_op_hash : "0xdeadbeefcafebabe".to_string(),
-            epoch_ns     : 42_000_000_000,
-            run_id       : "entegrasyon".to_string(),
+            risk_score: 95.0,
+            tau: 75.0,
+            baseline: MlDsaSecurityLevel::Level44,
+            user_op_hash: "0xdeadbeefcafebabe".to_string(),
+            epoch_ns: 42_000_000_000,
+            run_id: "entegrasyon".to_string(),
             fresh_entropy: None,
-            rho_override : None,
+            rho_override: None,
         };
 
         let outcome = pipeline::run(&istek).unwrap();
-        assert!(outcome.decision.proof_required, "risk 95 > τ 75 → kanıt üretilmeli");
+        assert!(
+            outcome.decision.proof_required,
+            "risk 95 > τ 75 → kanıt üretilmeli"
+        );
 
         let rho_prime = outcome.rho_prime;
-        let options   = get_proof_options();
-        let trace     = pipeline::trace_table_for(&outcome).unwrap();
+        let options = get_proof_options();
+        let trace = pipeline::trace_table_for(&outcome).unwrap();
 
-        let last_step  = trace.length() - 1;
+        let last_step = trace.length() - 1;
         let pub_inputs = QAdaptivePublicInputs {
             start_state: [
-                trace.get(0, 0), trace.get(1, 0),
-                trace.get(2, 0), trace.get(3, 0),
+                trace.get(0, 0),
+                trace.get(1, 0),
+                trace.get(2, 0),
+                trace.get(3, 0),
             ],
             final_state: [
-                trace.get(0, last_step), trace.get(1, last_step),
-                trace.get(2, last_step), trace.get(3, last_step),
+                trace.get(0, last_step),
+                trace.get(1, last_step),
+                trace.get(2, last_step),
+                trace.get(3, last_step),
             ],
         };
 
         let prover = QAdaptiveProver::new(options);
-        let proof  = prover.prove(trace).unwrap();
+        let proof = prover.prove(trace).unwrap();
 
-        let filepath    = "test_proof_payload_rho.json";
+        let filepath = "test_proof_payload_rho.json";
         let proof_bytes = proof.to_bytes();
-        let kayit       = outcome.pqc.as_ref().unwrap();
+        let kayit = outcome.pqc.as_ref().unwrap();
 
         export_proof_payload(
             outcome.decision.status,
@@ -863,25 +960,25 @@ mod tests {
             &proof_bytes,
             &pub_inputs,
             bridge::PayloadExtras {
-                tau          : istek.tau,
-                run_id       : istek.run_id.clone(),
+                tau: istek.tau,
+                run_id: istek.run_id.clone(),
                 deterministic: outcome.deterministic,
-                stark        : bridge::StarkMetrics {
-                    proof_bytes              : proof_bytes.len(),
-                    prover_ms                : 0.0,
+                stark: bridge::StarkMetrics {
+                    proof_bytes: proof_bytes.len(),
+                    prover_ms: 0.0,
                     conjectured_security_bits: air::STARK_SECURITY_BITS,
-                    field                    : "f128".to_string(),
-                    num_queries              : air::FRI_NUM_QUERIES,
-                    blowup_factor            : air::FRI_BLOWUP_FACTOR,
+                    field: "f128".to_string(),
+                    num_queries: air::FRI_NUM_QUERIES,
+                    blowup_factor: air::FRI_BLOWUP_FACTOR,
                 },
                 pqc: Some(bridge::PqcSummary {
-                    tier                     : kayit.level.name().to_string(),
-                    public_key_bytes         : kayit.public_key_len,
-                    secret_key_bytes         : kayit.secret_key_len,
-                    signature_bytes          : kayit.signature_len,
+                    tier: kayit.level.name().to_string(),
+                    public_key_bytes: kayit.public_key_len,
+                    secret_key_bytes: kayit.secret_key_len,
+                    signature_bytes: kayit.signature_len,
                     public_key_commitment_hex: hex::encode(kayit.public_key_commitment),
-                    signature_prefix_hex     : kayit.signature_prefix_hex.clone(),
-                    signature_verified       : kayit.verified,
+                    signature_prefix_hex: kayit.signature_prefix_hex.clone(),
+                    signature_verified: kayit.verified,
                 }),
                 calldata: Some(bridge::CalldataRecord::compute(
                     bridge::CalldataRecord::DEFAULT_BATCH_SIZE,
@@ -890,14 +987,18 @@ mod tests {
                 )),
             },
             filepath,
-        ).unwrap();
+        )
+        .unwrap();
 
         let metadata = std::fs::metadata(filepath).unwrap();
         assert!(metadata.len() > 1000, "Payload en az 1KB olmalı");
 
         // rho_prime_hex alanı mevcut mu?
         let content = std::fs::read_to_string(filepath).unwrap();
-        assert!(content.contains("rho_prime_hex"), "Payload rho_prime_hex içermeli");
+        assert!(
+            content.contains("rho_prime_hex"),
+            "Payload rho_prime_hex içermeli"
+        );
 
         std::fs::remove_file(filepath).unwrap();
     }
