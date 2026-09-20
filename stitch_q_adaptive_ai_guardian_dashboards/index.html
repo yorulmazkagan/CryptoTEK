@@ -140,10 +140,21 @@ button.on{border-color:var(--amber);color:var(--amber)}
 .logic{font-family:var(--mono);font-size:12px;padding:4px 0;
   border-bottom:1px dashed var(--line)}
 .logic:last-child{border:0}
-#limits{background:#1a1408;border:1px solid #6b4d0f;border-radius:10px;
-  padding:11px 14px;margin-top:12px}
+/* Sınırlar paneli yalnızca SUNUM MODUNDA görünür.
+   Gerekçe: jüriye bu maddeleri okuyacağımız an sunumun kendisi; boştaki
+   konsolda sürekli durması ekranı meşgul ediyordu. Panel silinmedi,
+   sahnelendi — `test_sinirlar_paneli_eksiksiz` hem içeriğini hem de
+   sunum moduna bağlı olduğunu doğruluyor. */
+#limits{display:none;background:#1a1408;border:1px solid #6b4d0f;
+  border-radius:10px;padding:11px 14px;margin-top:12px}
+#limits.show{display:block}
 #limits h3{color:var(--amber)}
 #limits li{font-size:12.5px;margin:3px 0 3px 17px;color:#e9d9b3}
+
+/* Açık temada panel koyu kahve kalıyordu — sayfanın geri kalanıyla
+   uyumsuzdu. Amber kimliği korunur, zemin ve metin aydınlatılır. */
+:root[data-theme="light"] #limits{background:#fdf6e3;border-color:#c9a227}
+:root[data-theme="light"] #limits li{color:#4a3a12}
 
 /* ── Alt şerit ─────────────────────────────────────────────────────────── */
 details{background:var(--panel);border:1px solid var(--line);
@@ -625,6 +636,9 @@ function sunumCiz(){
 function sunumAc(v){
   sunum = v; adim = 0;
   $("#stage").classList.toggle("show", v);
+  // Sınırlar paneli sahneyle birlikte açılır: jüriye "iddia etmediklerimizi"
+  // okuyacağımız an sunumun kendisi.
+  $("#limits").classList.toggle("show", v);
   $("#presBtn").classList.toggle("on", v);
   if (v) sunumCiz();
 }

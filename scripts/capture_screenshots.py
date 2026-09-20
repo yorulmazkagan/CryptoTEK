@@ -62,13 +62,17 @@ CHROME_ADAYLARI = [
 GENISLIK = 1440
 OLCEK = 2  # deviceScaleFactor — README'de net görünmesi için 2x
 
-# (element seçici, dosya adı, açıklama)
+# (element seçici, dosya adı, açıklama, görüntü öncesi çalıştırılacak JS)
+#
+# Sınırlar paneli varsayılan ekranda gizli; yalnızca Sunum Modu'nda açılıyor.
+# Görüntüsünü alabilmek için önce o modu açmak gerekiyor.
 BOLUMLER = [
-    ("#top",           "01_ust_serit",      "Bağlantı durumu, koşu kimliği, τ(t), zırh, determinizm"),
-    ("#nedensellik",   "02_nedensellik",    "İşlem → Sezgi → Zırh → Kanıt akışı"),
-    ("#pipe",          "03_yurutme_izi",    "11 aşamalı boru hattı, her süre ölçülmüş"),
-    ("#kafes",         "04_kafes_ve_karar", "Kafes matrisi, imza uzunlukları, karar gerekçesi"),
-    ("#limits",        "05_iddia_etmedik",  "İddia Etmediklerimiz paneli"),
+    ("#top",         "01_ust_serit",      "Bağlantı, koşu kimliği, τ(t), zırh, determinizm", None),
+    ("#nedensellik", "02_nedensellik",    "İşlem → Sezgi → Zırh → Kanıt akışı", None),
+    ("#pipe",        "03_yurutme_izi",    "11 aşamalı boru hattı, her süre ölçülmüş", None),
+    ("#kafes",       "04_kafes_ve_karar", "Kafes matrisi, imza uzunlukları, karar gerekçesi", None),
+    ("#limits",      "05_iddia_etmedik",  "İddia Etmediklerimiz (Sunum Modu)",
+     "document.querySelector('#presBtn').click()"),
 ]
 
 
@@ -249,8 +253,12 @@ async def tema_cek(cdp: Cdp, port: int, tema: str):
     await asyncio.sleep(1.2)
 
     ek = "" if tema == "dark" else "_acik"
-    for secici, ad, _aciklama in BOLUMLER:
+    for secici, ad, _aciklama, hazirla in BOLUMLER:
         yol = CIKTI / f"{ad}{ek}.png"
+
+        if hazirla:
+            await cdp.js(hazirla)
+            await asyncio.sleep(0.5)
 
         # Yatay taşma varsa görüntü alanını geçici olarak genişlet.
         fazla = await tasma_genisligi(cdp, secici)

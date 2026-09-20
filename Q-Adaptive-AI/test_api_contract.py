@@ -171,6 +171,12 @@ class UydurmaVeriTest(unittest.TestCase):
         Özellikle «sıfır bilgi» maddesi: ρ' arayüzde yayınlandığı için s1, s2
         ve A matrisi herkesçe yeniden hesaplanabilir. Yani kanıt özlüdür ama
         bir sır gizlemez. Bunu söylemezsek, soran ilk jüri üyesinde yakalanırız.
+
+        Panel artık varsayılan ekranda DEĞİL, Sunum Modu ile açılıyor. Bu,
+        testin işini zorlaştırıyor: paneli HTML'de bırakıp sunum moduna
+        bağlayan satırı silmek, paneli hiç görünmez yapar ama içerik
+        kontrolünden kaçardı. Bu yüzden aşağıda bağlantının kendisi de
+        doğrulanıyor.
         """
         panel = self.html.split('id="limits"', 1)
         self.assertEqual(len(panel), 2, "«İddia Etmediklerimiz» paneli kayıp")
@@ -193,6 +199,21 @@ class UydurmaVeriTest(unittest.TestCase):
             f"Sınırlar panelinden şu madde(ler) düşmüş: {eksik}. "
             "Bir sınırı panelden çıkarmak, onu ortadan kaldırmaz — "
             "yalnızca jürinin bulmasını bekler.",
+        )
+
+        # Panel gizli olduğuna göre, onu AÇAN yol da bozulmamış olmalı.
+        self.assertIn(
+            '$("#limits").classList.toggle("show"', self.html,
+            "Sınırlar paneli Sunum Modu'na bağlı değil — panel HTML'de duruyor "
+            "ama hiçbir zaman görünmüyor. Sessizce kaldırılmış olur.",
+        )
+        self.assertRegex(
+            self.html, r"#limits\s*\{[^}]*display:\s*none",
+            "#limits varsayılanda gizli olmalı (Sunum Modu ile açılır).",
+        )
+        self.assertRegex(
+            self.html, r"#limits\.show\s*\{[^}]*display:\s*block",
+            "#limits.show kuralı yok — sunum modunda da görünmez.",
         )
 
     def test_olculmeyen_asama_python_tarafindan_eklenmiyor(self):

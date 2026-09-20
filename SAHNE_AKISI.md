@@ -117,7 +117,8 @@ imza.
 
 **Yap:** Alttaki amber paneli göster.
 
-**Göster:** **İddia Etmediklerimiz** — yedi madde, kalıcı olarak ekranda.
+**Göster:** **İddia Etmediklerimiz** — sekiz madde. Panel Sunum Modu ile
+açılıyor; bu adımda zaten o moddasınız, yani ekranda duruyor.
 
 > **İtiraz:** *"Neyi iddia etmiyorsunuz?"* (ya da Q&A'de gelecek herhangi
 > bir sınır sorusu)

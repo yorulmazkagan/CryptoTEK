@@ -478,8 +478,12 @@ actually evaluated it.
 
 ![Limits panel](./images/05_iddia_etmedik.png)
 
-This panel is permanent, not a footnote. It is the on-stage form of the lesson
-that produced this audit: state the limits before a juror finds them.
+This panel opens with **Presentation Mode** — it is staged, not buried. The
+default console keeps the working area clear; the moment the system is walked
+through for an audience, the limits go up on screen alongside everything else.
+
+It is the on-stage form of the lesson that produced this audit: state the
+limits before someone else finds them.
 
 It says, among other things, that the STARK **does not prove ML-DSA
 verification in-circuit**, that the proof is **succinct but hides no secret**
@@ -490,6 +494,10 @@ the proof is **not verified on-chain**, and that **no independent security
 audit and no mainnet deployment** exist.
 
 A test reads this panel and fails the build if any of these entries is removed.
+Because the panel is now hidden by default, the same test also asserts that it
+is still wired to Presentation Mode — otherwise leaving the markup in place
+while deleting the one line that reveals it would hide the limits and still
+pass.
 
 ---
 
