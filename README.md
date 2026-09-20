@@ -13,8 +13,8 @@
 <br/>
 <br/>
 
-<img src="https://img.shields.io/badge/Tests-187%20Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white" alt="187 tests passing"/>
-<img src="https://img.shields.io/badge/ONNX%20Latency-1.12ms-00B4D8?style=for-the-badge" alt="ONNX 1.12ms"/>
+<img src="https://img.shields.io/badge/Tests-216%20Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white" alt="216 tests passing"/>
+<img src="https://img.shields.io/badge/ONNX%20Latency-measured%20per%20run-00B4D8?style=for-the-badge" alt="ONNX latency measured per run"/>
 <img src="https://img.shields.io/badge/STARK%20Proof%20Size-measured%20per%20run-blueviolet?style=for-the-badge" alt="STARK proof size measured per run"/>
 <img src="https://img.shields.io/badge/Prover%20Time-measured%20per%20run-blue?style=for-the-badge" alt="Prover time measured per run"/>
 <img src="https://img.shields.io/badge/L2%20Calldata-~98%25%20vs%20ML--DSA%20batch-success?style=for-the-badge" alt="~98% calldata saving vs ML-DSA batch"/>
@@ -154,7 +154,7 @@ The 3-dimensional feature vector is then fed into the **exported ONNX Isolation 
 | Feature dimensions | 16 |
 | Inference runtime | ONNX Runtime 1.17+ (CPU) |
 | Calibration method | Platt Scaling (sigmoid fit on holdout) |
-| Inference latency | **1.12 ms** (p50, single-thread CPU) |
+| Inference latency | **measured per run** — ~10 ms observed on a single-thread CPU; written to the `onnx_cikarim` pipeline stage on every request |
 | Decision threshold | NAS ≥ 0.72 → anomaly flag raised |
 
 ---
@@ -167,7 +167,9 @@ Once a telemetry batch arrives at the FastAPI endpoint, the inference request en
 
 ```python
 # Q-Adaptive-AI/src/api.py — rate-limiter core (illustrative)
-inference_queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+# Capacity is derived from the host, not hard-coded. See _resolve_queue_capacity().
+capacity, reason = _resolve_queue_capacity()
+inference_queue: asyncio.Queue = asyncio.Queue(maxsize=capacity)
 
 async def enqueue_inference(payload: TelemetryPayload) -> InferenceResult:
     if inference_queue.full():
@@ -176,7 +178,11 @@ async def enqueue_inference(payload: TelemetryPayload) -> InferenceResult:
     return await worker_pool.submit(payload)
 ```
 
-The `maxsize=50` bound is not arbitrary — it is derived from the product of the ONNX inference latency (1.12 ms) and the target 99th-percentile response SLA (56 ms), yielding a maximum in-flight batch depth of ⌊56 / 1.12⌋ = 50. This prevents memory pressure under adversarial burst loads while guaranteeing sub-60ms end-to-end API response times.
+**Correction.** An earlier revision of this document claimed the `maxsize=50` bound was "derived from the ONNX inference latency (1.12 ms) and a 56 ms SLA, yielding ⌊56 / 1.12⌋ = 50". That derivation was invented after the fact — neither number was measured, and the queue bound had no resource basis at all.
+
+The real problem was worse than a wrong number: on a 2-core machine, opening 50 concurrent STARK proof slots makes the guard **useless** — the queue never fills but the machine dies. A DoS protection that does not engage in the scenario it claims to protect against is not a protection.
+
+The capacity is now derived from the host's actual resources by `api.py::_resolve_queue_capacity()` — core count and available memory, clamped to `[1, 64]` — and `/api/health` reports the reasoning as text (e.g. *"2 çekirdek ; 7.8 GB / 0.5 GB-per-proof = 15 → min = 2 → clamp[1,64] = 2"*). `Q_ADAPTIVE_ZK_QUEUE_MAX` overrides it.
 
 The API exposes three primary routes:
 
@@ -226,7 +232,7 @@ The `trace.rs` module constructs the execution trace matrix, and `bridge.rs` ser
 |---|---|
 | Proof size | **measured per run** — ~3.7–4.2 KB depending on armor tier; written to `proof_payload.json` → `stark.proof_bytes` |
 | Prover time (release build) | **measured per run** — typically 1–20 ms, hardware-dependent; written to `stark.prover_ms` |
-| Verifier time (on-chain) | < 2 ms |
+| On-chain STARK verification | **not implemented** — by design. The contract checks the proof length (`MIN_STARK_PROOF_BYTES = 3000`) and verifies the guardian's ECDSA attestation via `ecrecover`. Verifying a STARK on-chain is exactly what this architecture avoids. |
 | STARK security bits | 80 (conjectured) |
 | Field | f128 (128-bit prime field, `winter_math::fields::f128`) |
 | Hash function | BLAKE3 (Merkle commitments), SHAKE-128 (lattice matrix expansion) |
@@ -300,16 +306,18 @@ function validateUserOp(
 
 ---
 
-## 5. Certified Benchmark Metrics
+## 5. Measured Benchmark Metrics
 
-The following metrics are **certified results** from the completed integration test suite (`12/12 tests passing`). All benchmarks were recorded on a single-core Intel Core i7-12700H thread (AI layer) and an M2 MacBook Pro (Rust prover, release mode).
+> **Nothing here is "certified."** An earlier revision of this section called these *certified results* and cited `12/12 tests passing`. No independent body certified anything — these are our own measurements. The suite is now **216 automated tests** (Rust 61 · Solidity 121 · parity 9 · attestation 18 · API-contract 7).
+
+All numbers below were measured on a single development machine and vary with hardware. Every timing is re-measured on each run and written into the API response, so you can check them yourself instead of trusting this table.
 
 ### 5.1 — Comparative Performance Dashboard
 
 | Benchmark Category | Metric | Result | Baseline (Classical) | Improvement |
 |---|---|---|---|---|
-| **AI Inference Latency** | ONNX p50 | **1.12 ms** | N/A (new capability) | — |
-| **AI Inference Latency** | ONNX p99 | 2.87 ms | N/A | — |
+| **AI Inference Latency** | ONNX, measured per run | **~10 ms** observed | N/A (new capability) | reported as the `onnx_cikarim` stage |
+| **AI Inference Latency** | ONNX p99 | not measured | N/A | percentiles were never collected |
 | **ZK Proof Generation** | Prover time | **measured per run** (typ. 1–20 ms) | N/A | hardware-dependent; see `stark.prover_ms` |
 | **ZK Proof Size** | Serialized bytes | **measured per run** (~3.7–4.2 KB) | ECDSA sig: 65 B | varies with armor tier; see `stark.proof_bytes` |
 | **On-chain Verification** | EVM gas (verifyProof) | ~148,000 gas | ECDSA ecrecover: 3,000 gas | acceptable for L2 |
@@ -461,7 +469,7 @@ Q-ADAPTIVE (AI Guardian)
 │   └── zincir_izleyici.png            ← Tab 4: On-Chain State Monitor screenshot
 │
 ├── docs/
-│   ├── integration_test_report.md     ← Full 12/12 test run report
+│   ├── integration_test_report.md     ← Integration test report (216 tests)
 │   ├── references_guide.md            ← Academic references & citations
 │   └── presentation_blueprint_guide.md
 │
@@ -520,7 +528,7 @@ Expected response:
 {
   "anomaly": false,
   "nas_score": 0.31,
-  "latency_ms": 1.12,
+  "latency_ms": 10.08,
   "model_version": "q_adaptive_guardian_v1"
 }
 ```
@@ -596,11 +604,12 @@ is an estimate.
 
 | Layer | Command | Result |
 |---|---|---|
-| Rust (ZK + PQC) | `cd Q-Adaptive-ZK && cargo test` | **55 passed** |
-| Solidity | `cd Q-Adaptive-Contracts && forge test` | **105 passed, 4 skipped** |
+| Rust (ZK + PQC) | `cd Q-Adaptive-ZK && cargo test` | **61 passed** |
+| Solidity | `cd Q-Adaptive-Contracts && forge test` | **121 passed** (4 fork tests skip without `ETH_RPC_URL`) |
 | Cross-layer parity | `python3 Q-Adaptive-AI/test_layer_parity.py` | **9 passed** |
+| API ↔ UI contract | `python3 Q-Adaptive-AI/test_api_contract.py` | **7 passed** (38 bound fields verified) |
 | Attestation crypto | `python3 Q-Adaptive-AI/test_attestation.py` | **18 passed** |
-| **Total (automated tests)** | | **187 passed, 4 skipped** |
+| **Total (automated tests)** | | **216 passed** |
 | ONNX ↔ sklearn parity | `cd Q-Adaptive-AI && python3 test_onnx_inference.py` | 3 scenarios, exit 0 |
 | API integration | `cd Q-Adaptive-AI && python3 test_api_client.py` | requires a running server |
 
@@ -628,9 +637,9 @@ Of the Solidity tests, 10 are fuzz/invariant tests running 512 cases each.
 
 | Contract | Lines | Branches | Functions |
 |---|---|---|---|
-| `QAdaptivePaymaster` | **100.00%** (94/94) | 96.77% (30/31) | 100.00% (15/15) |
-| `QAdaptiveAccount` | 92.05% (162/176) | 79.37% (50/63) | 95.65% (22/23) |
-| **Total** | 93.58% | 83.67% | 93.62% |
+| `QAdaptivePaymaster` | **100.00%** (104/104) | 97.14% (34/35) | 100.00% (17/17) |
+| `QAdaptiveAccount` | 94.15% (177/188) | 80.28% (57/71) | 96.00% (24/25) |
+| **Total** | 94.97% | 84.55% | 94.12% |
 
 > Branch coverage is **not** 100%. The uncovered branches in `QAdaptiveAccount`
 > are mostly defensive paths in the guardian-signature recovery routine

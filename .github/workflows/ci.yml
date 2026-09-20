@@ -286,6 +286,14 @@ jobs:
           fi
           echo "OK: stipend yok"
 
+      # Bu denetimin asıl dersi: belge, kodda olmayan bir şeyi iddia edemesin.
+      # `docs/` altındaki "Kod İncelemesi" bölümleri kaynak dosyaların tamamını
+      # alıntılıyordu ve alıntı donmuştu — `DefaultHasher` koddan silindikten
+      # sonra belgede 21 yerde durmaya devam etti. Bloklar artık elle
+      # yazılmıyor, kaynaktan üretiliyor; bu adım kaymayı yakalar.
+      - name: "Belge kod blokları kaynakla eşleşmeli"
+        run: python3 docs/kod_bloklari_senkron.py --check
+
   solidity-lint:
     name: "Solidity · ERC-4337 Contract Lint & Slither Analysis"
     runs-on: ubuntu-latest

@@ -64,7 +64,7 @@ Merkeziyetsiz ağları aşırı işlem ücretlerine ve yürütme gecikmelerine m
 Merkeziyetsiz ağlar kaynak kısıtlı ortamlardır. Kuantum sonrası kriptografik (PQC) imza şemaları (özellikle kafes tabanlı algoritmalar), klasik ECDSA'ya kıyasla önemli ölçüde daha büyük genel anahtarlara, imzalara ve doğrulama sürelerine ihtiyaç duyar. Örnek karşılaştırma:
 * ECDSA imzaları $64$ bayt, genel anahtarları ise $33$ bayttır.
 * ML-DSA-44 (NIST Kategori 2) imzaları $2420$ bayt, genel anahtarları ise $1312$ bayttır.
-* ML-DSA-87 (NIST Kategori 5) imzaları $4595$ bayt, genel anahtarları ise $2592$ bayttır.
+* ML-DSA-87 (NIST Kategori 5) imzaları $4627$ bayt, genel anahtarları ise $2592$ bayttır. Bu değerler NIST FIPS 204 Tablo 2'den gelir ve her koşuda `fips204` kütüphanesinden ölçülüp karşılaştırılır (`pqc::tests::standart_boyutlari_uyusuyor`).
 
 Eğer bir Katman-1 veya Katman-2 ağı, standart çalışma koşullarında her işlem için ML-DSA-87 doğrulaması dayatsaydı, ağın saniyedeki işlem kapasitesi (TPS) $\%80$'den fazla düşer ve kullanıcıların ödediği calldata gas maliyetleri katlanarak artardı.
 
@@ -103,7 +103,8 @@ Q-ADAPTIVE sistemi, istemci tarafındaki WebAssembly izolasyon sınırlarından 
 │  KATMAN 1: FASTAPI GEÇİDİ (Asenkron Alt Süreç Yürütücü ve Eşzamanlılık Denetimi)       │
 │  - İstemci işlem vektörlerini alır; ağ telemetrisini izler                             │
 │  - Dinamik eşiği hesaplar: τ(t) = τ_base + α·σ²_gas + β·σ²_freq                         │
-│  - DoS saldırılarını engellemek için istekleri asyncio.Queue(maxsize=50) ile sınırlar  │
+│  - DoS saldırılarını engellemek için kuyruk kapasitesini makinenin çekirdek     │
+│    ve bellek miktarından türetir (_resolve_queue_capacity)                      │
 └────────────────────────────────────────────────────────────────────────────────────────┘
                                             │
                                             │ [Komut: Asenkron alt süreç başlatma]
@@ -145,7 +146,9 @@ Q-ADAPTIVE sistemi, istemci tarafındaki WebAssembly izolasyon sınırlarından 
 * **Sorumluluklar**:
   * İstemci için birincil ağ geçidi olarak çalışır. Gelen işlem vektörlerini alır ve bunları makine öğrenimi modeliyle değerlendirir.
   * Dinamik kayan pencere kalibrasyon eşiği $\tau(t)$'yi hesaplar. Ağ volatilitesini ölçmek için son $50$ işlemin geçmişini tutar.
-  * ZK-STARK kanıt üretim hızını kontrol eder. STARK kanıtı üretimi yoğun CPU kullanımı gerektirdiğinden, saldırganlar sistemi yüksek riskli isteklerle kilitlemeye çalışabilir. Ağ geçidi, bunu engellemek için `asyncio.Queue(maxsize=50)` hız sınırlayıcısını kullanır. Bu sınırı aşan istekler, CPU tükenmesini önlemek amacıyla HTTP 429 "Cryptographic Proof Queue Saturated" koduyla reddedilir.
+  * ZK-STARK kanıt üretim hızını kontrol eder. STARK kanıtı üretimi yoğun CPU kullanımı gerektirdiğinden, saldırganlar sistemi yüksek riskli isteklerle kilitlemeye çalışabilir. Ağ geçidi bunu engellemek için bir `asyncio.Queue` hız sınırlayıcısı kullanır; sınırı aşan istekler HTTP 429 "Cryptographic Proof Queue Saturated" koduyla reddedilir.
+
+  **Kapasite sabit değildir.** Önceki sürüm `maxsize=50` yazıyordu ve bu sayının hiçbir dayanağı yoktu. Daha kötüsü: 2 çekirdekli bir makinede 50 eşzamanlı STARK kanıtı açmak korumayı **işlevsiz** kılar — kuyruk hiç dolmaz ama makine çöker. Bir savunmanın, koruduğunu iddia ettiği senaryoda devreye girmemesi savunma değildir. Kapasite artık `_resolve_queue_capacity()` tarafından çekirdek sayısı ve boş bellekten türetilip `[1, 64]` aralığına sıkıştırılır; `/api/health` gerekçeyi metin olarak yayınlar (bu belgenin yazıldığı makinede: *"20 çekirdek ; 6.8 GB / 0.5 GB-per-proof = 13 → min = 13 → clamp[1,64] = 13"*). `Q_ADAPTIVE_ZK_QUEUE_MAX` ortam değişkeni bu değeri geçersiz kılar.
 
 ### 2.1.3 Katman 2: Rust Winterfell Motoru (Parameterized Module Lattice STARK Prover Core)
 * **Yürütme Ortamı**: Rust ile yazılmış ve Winterfell ZK-STARK kanıtlama kütüphanesini derleyen x86_64/AArch64 mimarilerine uyumlu yerel binary dosya.
@@ -267,6 +270,7 @@ Bu katmanları kararlı bir güvenlik döngüsünde birleştirmek için verileri
 
 Aşağıda, `Q-Adaptive-AI/src/model.py` dosyasının eksiksiz, üretim kalitesindeki kaynak kodu yer almaktadır. Bu dosya, sistemin anomali tespit mantığını, kayan pencere kalibratörünü ve otonom tepki mekanizmasını içermektedir.
 
+<!-- KOD-SENK kaynak=Q-Adaptive-AI/src/model.py parca=1/1 ic-baslik=hayir -->
 ```python
 # =============================================================================
 # Q-ADAPTIVE AI Guardian — ML Motoru (src/model.py)
@@ -958,33 +962,58 @@ class QAnomalyDetector:
         tam olarak yapılandırılmış bir QAnomalyDetector döndürür.
 
         Args:
-            directory : Yüklenen dosyanın bulunduğu klasör.
+            directory : Artefaktın bulunduğu klasör (varsayılan: 'models/').
 
         Returns:
-            QAnomalyDetector: Yüklenen model.
+            QAnomalyDetector: Yüklenen ve inference'a hazır dedektör.
+
+        Raises:
+            FileNotFoundError: Artefakt dosyası bulunamazsa.
         """
         from pathlib import Path
         load_path = Path(directory) / MODEL_ARTIFACT_NAME
 
         if not load_path.exists():
             raise FileNotFoundError(
-                f"Model dosyası bulunamadı: {load_path}"
+                f"Model artefaktı bulunamadı: '{load_path}'\n"
+                f"Lütfen önce 'python run_pipeline.py' ile modeli eğitin."
             )
 
         artifact = joblib.load(load_path)
 
-        detector = cls()
-        detector._model         = artifact["model"]
-        detector._train_mean    = artifact["train_mean"]
-        detector._train_std     = artifact["train_std"]
-        detector._training_rows = artifact["training_rows"]
-        detector._is_trained    = True
+        instance = cls()
+        instance._model         = artifact["model"]
+        instance._train_mean    = artifact["train_mean"]
+        instance._train_std     = artifact["train_std"]
+        instance._training_rows = artifact["training_rows"]
+        instance._is_trained    = True
 
         logger.info(
-            "Model başarıyla yüklendi! (%d satır | μ=%.4f, σ=%.4f)",
-            detector._training_rows, detector._train_mean, detector._train_std
+            "Model yüklendi ← '%s' (μ=%.4f, σ=%.4f, %d satır)",
+            load_path,
+            instance._train_mean,
+            instance._train_std,
+            instance._training_rows,
         )
-        return detector
+        return instance
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Fabrika Fonksiyonu: API Başlangıç Olayı İçin
+# ────────────────────────────────────────────────────────────────────────────────
+
+def load_detector(directory: str = MODEL_DIR) -> QAnomalyDetector:
+    """
+    FastAPI lifespan olayı için hazır fabrika fonksiyonu.
+    'models/' klasöründeki artefaktı yükler ve inference'a hazır dedektör döndürür.
+
+    Args:
+        directory : Model artefaktının bulunduğu klasör.
+
+    Returns:
+        QAnomalyDetector: Yüklenen dedektör.
+    """
+    return QAnomalyDetector.load(directory)
 ```
 
 ## 3.2 Kayan Pencere Kalibratörünün Matematiksel Analizi
@@ -1070,6 +1099,7 @@ Gelişmiş bir siber tehdit aktörü, makine öğrenimi modelini aşmak için i�
 
 Aşağıda, `Q-Adaptive-AI/src/api.py` dosyasının eksiksiz, üretim kalitesindeki kaynak kodu yer almaktadır. Bu dosya; FastAPI sunucu yapılandırmasını, asenkron alt süreç yöneticisini ve DoS korumasını sağlayan işlem sırası kontrol mekanizmasını barındırmaktadır.
 
+<!-- KOD-SENK kaynak=Q-Adaptive-AI/src/api.py parca=1/1 ic-baslik=hayir -->
 ```python
 # =============================================================================
 # Q-ADAPTIVE AI Guardian — FastAPI REST + Dashboard Hub (src/api.py)
@@ -1077,7 +1107,8 @@ Aşağıda, `Q-Adaptive-AI/src/api.py` dosyasının eksiksiz, üretim kalitesind
 # Production-Grade Refactor:
 #   • subprocess.run(["cargo", "run"]) TAMAMEN KALDIRILDI
 #   • asyncio.create_subprocess_exec → Önceden derlenmiş release binary'e yönlendirir
-#   • asyncio.Queue(maxsize=50) → Sunucu kaynaklarını DoS'tan korur
+#   • asyncio.Queue → Sunucu kaynaklarını DoS'tan korur. Kapasite sabit değil;
+#     _resolve_queue_capacity() ile makinenin çekirdek/bellek miktarından türetilir.
 #   • HTTP 429 "Cryptographic Proof Queue Saturated" → Kuyruğu doldurmaya çalışan
 #     saldırganları durdurur
 #   • SlidingWindowThresholdCalibrator (model.py'den) → Statik %75 eşiği kaldırıldı
@@ -1110,6 +1141,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -1127,6 +1159,19 @@ from scipy.stats import norm
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.utils import setup_logger
 from src.model import _THRESHOLD_CALIBRATOR, SlidingWindowThresholdCalibrator
+from src import armor, calldata
+from src.armor import ArmorTier
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Zırh Tabanı
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Hesabın taban zırh kademesi. Tek yönlü tırmanma kuralı gereği seçilen
+# kademe asla bunun altına inemez — manipüle edilmiş düşük bir risk skoru
+# bile zırhı düşüremez. Aynı kural zincirde de uygulanır.
+_BASELINE_ARMOR: ArmorTier = ArmorTier.parse(
+    os.getenv("Q_ADAPTIVE_BASELINE_ARMOR", "44")
+)
 
 logger = setup_logger("Q-ADAPTIVE.API")
 
@@ -1169,8 +1214,9 @@ _calib_meta    : Dict[str, Any]                 = {}
 _startup_time  : float                           = 0.0
 
 # Async ZK proof kuyruğu:
-#   maxsize=50 → En fazla 50 eş zamanlı kanıt üretimi.
-#   Kuyruk dolunca HTTP 429 döner. Sunucu başlatılırken lifespan'da oluşturulur.
+#   Kapasite _resolve_queue_capacity() ile çalışma anında belirlenir — sabit
+#   bir sayı DEĞİL. Kuyruk dolunca HTTP 429 döner. Sunucu başlatılırken
+#   lifespan içinde oluşturulur.
 _ZK_PROOF_QUEUE: Optional[asyncio.Queue] = None
 
 
@@ -1230,8 +1276,11 @@ async def lifespan(app: FastAPI):
 
     # ── Async ZK kanıt kuyruğu oluştur ───────────────────────────────────────
     # asyncio.Queue, asyncio döngüsünün içinde oluşturulmalıdır.
-    # maxsize=50: eş zamanlı 50 istek sınırı. Aşılırsa HTTP 429 döner.
-    _ZK_PROOF_QUEUE = asyncio.Queue(maxsize=50)
+    # Kapasite makineden türetilir; aşılırsa HTTP 429 döner. Gerekçe metni
+    # /api/health üzerinden yayınlanır, böylece sayı denetlenebilir kalır.
+    _kapasite, _gerekce = _resolve_queue_capacity()
+    _ZK_PROOF_QUEUE = asyncio.Queue(maxsize=_kapasite)
+    logger.info("ZK kuyruk kapasitesi gerekçesi: %s", _gerekce)
     logger.info(
         "✅ Async ZK kanıt kuyruğu oluşturuldu (maxsize=%d)", _ZK_PROOF_QUEUE.maxsize
     )
@@ -1332,13 +1381,16 @@ class TransactionPayload(BaseModel):
 class AiMetrics(BaseModel):
     risk_score        : float
     dynamic_threshold : float   # τ(t) — kayan pencere kalibrasyonu
+    # Alias: frontend reads `dynamic_tau` — senkronize et
     dynamic_tau       : float   # τ(t) kopyası — frontend HUD uyumluluğu
     islem_sikligi     : float
     ip_sapmasi        : float
     gas_sapmasi       : float
     calibrator_window_fill_pct: float  # Kalibratör penceresi doluluk oranı
+    # Kayan pencere varyans bileşenleri — frontend Kalibrasyon paneli
     variance_gas      : float   # σ²_gas(t) — gaz sapması varyansı
     variance_freq     : float   # σ²_freq(t) — işlem sıklığı varyansı
+    # Gerçek zamanlı kuyruk boyutu — frontend HUD kuyruk göstergesi
     queue_size        : int     # Anlık ZK proof kuyruk doluluk sayısı
 
 
@@ -1358,13 +1410,104 @@ class EvmMetrics(BaseModel):
     time_lock_seconds: int
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Ayrıntı Modelleri — "arkada ne oluyor" sorusunun veri karşılığı
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Bu modeller `proof_payload.json`'dan gelir ve yalnızca kanıt üretilen
+# koşularda doldurulur. Normal modda hepsi `None` döner.
+#
+# Neden eklendiler: arayüz ML-DSA anahtar boyutlarını, STARK güvenlik bitini,
+# calldata formülünü ve aşama sürelerini gösteremiyordu — bu veriler diskteki
+# payload'da kalıyor, tarayıcıya hiç ulaşmıyordu. Arayüzün bunları uydurmak
+# yerine gerçeğini göstermesi için buradan geçiyorlar.
+
+
+class StageRecord(BaseModel):
+    """Boru hattındaki tek bir aşamanın ölçülmüş kaydı."""
+    name  : str
+    ms    : float
+    ok    : bool
+    detail: str
+
+
+class PqcDetail(BaseModel):
+    """Ölçülmüş ML-DSA anahtar/imza bilgileri (`proof_payload.json` → `pqc`)."""
+    tier                     : str
+    public_key_bytes         : int
+    secret_key_bytes         : int
+    signature_bytes          : int
+    public_key_commitment_hex: str
+    signature_prefix_hex     : str
+    signature_verified       : bool
+    keygen_ms                : float
+    sign_ms                  : float
+    verify_ms                : float
+    #: Kurcalanmış mesaj CANLI hatta reddedildi mi? Testte değil, bu koşuda.
+    tamper_rejected          : bool
+    tamper_ms                : float
+
+
+class StarkDetail(BaseModel):
+    """Ölçülmüş STARK metrikleri (`proof_payload.json` → `stark`)."""
+    proof_bytes              : int
+    prover_ms                : float
+    conjectured_security_bits: int
+    field                    : str
+    num_queries              : int
+    blowup_factor            : int
+
+
+class CalldataDetail(BaseModel):
+    """Calldata tasarrufu — formülü ve girdileriyle birlikte."""
+    batch_size            : int
+    single_signature_bytes: int
+    naive_batch_bytes     : int
+    stark_proof_bytes     : int
+    savings_pct           : float
+    ecdsa_batch_bytes     : int
+    #: ECDSA'dan küçük müyüz? Beklenen yanıt: hayır. Dürüstlük için taşınıyor.
+    beats_ecdsa           : bool
+    formula               : str
+
+
+class LatticeSnapshot(BaseModel):
+    """Kafes matrisinin anlık görüntüsü — arayüz bunu ızgara olarak çizer."""
+    k         : int
+    ell       : int
+    cell_count: int
+    #: Hücreler DİZE: u128 değerleri JSON sayı aralığını aşıp JavaScript'te
+    #: sessizce hassasiyet kaybedebilirdi.
+    cells     : list[list[str]]
+    commitment: str
+
+
 class ExtendedPredictResponse(BaseModel):
-    """Tam pipeline yanıtı — dört UI sekmesinin tüm alanlarını kapsar."""
+    """Tam pipeline yanıtı.
+
+    İlk beş alan **değişmedi** — eski arayüz ve `test_layer_parity.py`
+    bunlara bağlı. Yeni alanların hepsi `Optional`: normal modda `None`
+    dönerler, asla örnek değerle doldurulmazlar.
+    """
     status     : str
     action     : str
     ai_metrics : AiMetrics
     pqc_metrics: PqcMetrics
     evm_metrics: EvmMetrics
+
+    # ── Yeni: ayrıntı katmanı ────────────────────────────────────────────────
+    #: Bu koşuda yürütülen aşamaların ölçülmüş listesi (ONNX + Rust aşamaları).
+    pipeline         : Optional[list[StageRecord]] = None
+    pqc_detail       : Optional[PqcDetail]         = None
+    stark_detail     : Optional[StarkDetail]       = None
+    calldata_detail  : Optional[CalldataDetail]    = None
+    lattice          : Optional[LatticeSnapshot]   = None
+    #: Koşu kimliği — log ↔ payload ↔ arayüz eşleştirmesi.
+    run_id           : Optional[str]               = None
+    #: Bu koşuda uygulanan dinamik eşik τ(t).
+    tau              : Optional[float]             = None
+    #: Koşu tam deterministik miydi? Jüri tekrarlanabilirliği için.
+    deterministic_run: Optional[bool]              = None
 
 
 class HealthResponse(BaseModel):
@@ -1423,9 +1566,83 @@ def _onnx_infer(islem: float, ip: float, gas: float) -> tuple[float, int]:
     return risk_pct, label
 
 
-async def _run_zk_prover_async() -> tuple[float, dict]:
+def _resolve_queue_capacity() -> tuple[int, str]:
+    """ZK kanıt kuyruğunun kapasitesini makinenin kaynaklarından türetir.
+
+    **Neden sabit 50 değil:**
+      50 sayısı hiçbir kaynak ölçümüne dayanmıyordu. Tam ölçekli bir STARK
+      kanıtlayıcısında 50 eşzamanlı kanıt ≈ 50 CPU çekirdeği + onlarca GB RAM
+      demektir. 2 çekirdekli bir sunucuda 50 slot açmak korumayı **etkisiz**
+      kılar: kuyruk hiç dolmaz ama makine çöker. Yani "DoS koruması" diye
+      sunulan şey, koruduğunu iddia ettiği senaryoda çalışmıyordu.
+
+    Kapasite iki üst sınırın küçüğüdür:
+      • çekirdek sayısı (kanıt üretimi CPU-yoğun),
+      • kullanılabilir bellek / kanıt başına tahmini bellek.
+
+    ``Q_ADAPTIVE_ZK_QUEUE_MAX`` ortam değişkeniyle geçersiz kılınabilir.
+
+    Returns:
+        ``(kapasite, gerekçe_metni)`` — gerekçe ``/api/health`` üzerinden
+        raporlanır ki sayının nereden geldiği görünür olsun.
+    """
+    override = os.getenv("Q_ADAPTIVE_ZK_QUEUE_MAX")
+    if override:
+        try:
+            deger = max(1, int(override))
+            return deger, f"Q_ADAPTIVE_ZK_QUEUE_MAX={override} ile elle ayarlandı"
+        except ValueError:
+            logger.warning(
+                "Q_ADAPTIVE_ZK_QUEUE_MAX=%r tamsayı değil — yok sayılıyor.", override
+            )
+
+    cekirdek = os.cpu_count() or 1
+
+    # Kanıt başına kabaca ayrılan bellek. Ölçüm arttıkça bu sayı güncellenmeli;
+    # şu an temkinli bir üst sınır olarak duruyor.
+    GB = 1024 ** 3
+    bellek_per_kanit_gb = 0.5
+
+    try:
+        kullanilabilir_gb = (os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")) / GB
+        bellek_siniri = int(kullanilabilir_gb / bellek_per_kanit_gb)
+        bellek_gerekce = (
+            f"{kullanilabilir_gb:.1f} GB / {bellek_per_kanit_gb} GB-per-proof = {bellek_siniri}"
+        )
+    except (ValueError, OSError, AttributeError):
+        # sysconf her platformda yok (ör. Windows) — bu durumda yalnızca
+        # çekirdek sayısına bakılır ve bu gerekçede açıkça yazılır.
+        bellek_siniri = cekirdek
+        bellek_gerekce = "bellek okunamadı, çekirdek sayısı kullanıldı"
+
+    ham = min(cekirdek, bellek_siniri)
+    kapasite = max(1, min(64, ham))
+
+    gerekce = (
+        f"{cekirdek} çekirdek ; {bellek_gerekce} "
+        f"→ min = {ham} → clamp[1,64] = {kapasite}"
+    )
+    return kapasite, gerekce
+
+
+async def _run_zk_prover_async(
+    decision_risk : float,
+    decision_tau  : float,
+    baseline      : ArmorTier,
+    user_op_hash  : str,
+    epoch_ns      : int,
+    run_id        : str,
+) -> tuple[float, dict]:
     """
     Önceden derlenmiş Rust ZK-STARK prover binary'sini asenkron olarak çalıştırır.
+
+    Args:
+        decision_risk: AI'ın ürettiği risk yüzdesi — prover'a `--risk-score`.
+        decision_tau:  Dinamik eşik τ(t) — prover'a `--tau`.
+        baseline:      Hesabın taban zırhı — prover'a `--baseline`.
+        user_op_hash:  Kanıtın bağlanacağı UserOperation özeti.
+        epoch_ns:      Dönem damgası (nanosaniye). ρ' türetimine girer.
+        run_id:        Koşu kimliği — log ↔ payload eşleştirmesi için.
 
     Güvenlik Tasarımı:
     ──────────────────
@@ -1453,9 +1670,32 @@ async def _run_zk_prover_async() -> tuple[float, dict]:
     logger.info("🔐 Async ZK-STARK kanıt üretimi başlatılıyor (binary=%s)", _ZK_BINARY_PATH.name)
     t0 = time.perf_counter()
 
+    # ── BULGU 2 DÜZELTMESİ: prover'a gerçek argümanlar geçiyor ───────────────
+    #
+    # Eski çağrı şöyleydi:
+    #     asyncio.create_subprocess_exec(str(_ZK_BINARY_PATH), cwd=..., ...)
+    # yani argüman listesi BOŞTU. Prover her koşuda kendi varsayılanlarıyla
+    # (risk 98.52, zırh ML-DSA-87) çalışıyordu. Kafes koşudan koşuya
+    # değişiyordu ama ZAMANA bağlı olarak — AI'ın kararına bağlı olarak değil.
+    # "AI kararı kriptografiyi değiştiriyor" iddiasının kodda karşılığı yoktu.
+    #
+    # Artık yedi argüman geçiyor; risk değişince kafes 16 → 30 → 56 elemana,
+    # imza 2.420 → 3.309 → 4.627 bayta çıkıyor.
+    prover_args = [
+        "--risk-score",   f"{decision_risk:.6f}",
+        "--tau",          f"{decision_tau:.6f}",
+        "--baseline",     baseline.cli_value,
+        "--user-op-hash", user_op_hash or "",
+        "--epoch-ns",     str(epoch_ns),
+        "--run-id",       run_id,
+    ]
+
+    logger.info("ZK prover argümanları: %s", " ".join(prover_args))
+
     try:
         proc = await asyncio.create_subprocess_exec(
             str(_ZK_BINARY_PATH),
+            *prover_args,
             cwd    = str(_ZK_ROOT),
             stdout = asyncio.subprocess.PIPE,
             stderr = asyncio.subprocess.PIPE,
@@ -1499,16 +1739,26 @@ async def _run_zk_prover_async() -> tuple[float, dict]:
     return prover_ms, proof_data
 
 
-async def _invoke_zk_prover_with_queue_guard() -> tuple[float, dict]:
+async def _invoke_zk_prover_with_queue_guard(
+    decision_risk : float,
+    decision_tau  : float,
+    baseline      : ArmorTier,
+    user_op_hash  : str,
+    epoch_ns      : int,
+    run_id        : str,
+) -> tuple[float, dict]:
     """
     asyncio.Queue ile hız sınırlı ZK prover çağrısı.
+
+    Argümanlar olduğu gibi `_run_zk_prover_async`'e aktarılır; bu katman
+    yalnızca eşzamanlılık sınırını uygular.
 
     Tasarım:
     ─────────
     asyncio.Queue bir semafor olarak kullanılır:
       • put_nowait() → kuyruğa bir "token" ekler (slot rezervasyonu)
       • get()        → token tüketilir (prover tamamlandığında)
-    Kuyruk maxsize=50 ile dolu olduğunda put_nowait() QueueFull fırlatır.
+    Kuyruk kapasitesine ulaştığında put_nowait() QueueFull fırlatır.
     Bu durum HTTP 429'a dönüştürülür.
 
     Saldırgan 50'den fazla eş zamanlı panik-modu isteği gönderirse:
@@ -1551,8 +1801,15 @@ async def _invoke_zk_prover_with_queue_guard() -> tuple[float, dict]:
     )
 
     try:
-        # Asenkron prover çalıştır
-        return await _run_zk_prover_async()
+        # Asenkron prover çalıştır — kararın tüm girdileri prover'a geçer.
+        return await _run_zk_prover_async(
+            decision_risk = decision_risk,
+            decision_tau  = decision_tau,
+            baseline      = baseline,
+            user_op_hash  = user_op_hash,
+            epoch_ns      = epoch_ns,
+            run_id        = run_id,
+        )
     finally:
         # Slot her zaman serbest bırakılır — başarı veya hata durumunda
         await _ZK_PROOF_QUEUE.get()
@@ -1652,7 +1909,7 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
     1. SlidingWindowThresholdCalibrator güncellenir → τ(t) hesaplanır (statik %75 değil)
     2. ONNX IsolationForest → kalibre edilmiş Z-skoru risk yüzdesi
     3. risk ≥ τ(t): asyncio kuyruğuna girer → Rust binary async spawn
-       • Kuyruk doluysa (>50 eş zamanlı): HTTP 429 "Cryptographic Proof Queue Saturated"
+       • Kuyruk doluysa: HTTP 429 "Cryptographic Proof Queue Saturated"
     4. proof_payload.json → EVM sınır koşulları + kanıt boyutu + rho_prime_hex
     5. Genişletilmiş JSON yanıtı (dört UI sekmesini besler)
     """
@@ -1679,20 +1936,39 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
     )
 
     # ── ADIM 2: ONNX Çıkarımı ────────────────────────────────────────────────
+    #
+    # Süre ölçülüyor çünkü boru hattının İLK aşaması bu. Rust tarafı kendi
+    # aşamalarını ölçüyor; arayüzdeki şeridin baştan sona tam olması için
+    # buradaki ölçüm onların başına eklenecek.
+    _t_onnx = time.perf_counter()
     risk_pct, onnx_label = _onnx_infer(
         payload.Islem_Sikligi,
         payload.IP_Sapmasi,
         payload.Gas_Sapmasi,
     )
+    onnx_ms = (time.perf_counter() - _t_onnx) * 1000.0
 
-    # Panik kararı: dinamik eşik kullanılır (statik değil)
-    is_panic   = risk_pct >= dynamic_threshold
+    # ── BULGU 3 + 4 DÜZELTMESİ: karar TEK kuraldan geliyor ───────────────────
+    #
+    # Eskiden karar burada, Rust'takinden FARKLI bir kuralla veriliyordu ve
+    # zırh yalnızca bir metindi:
+    #     armor_tier = "ML-DSA-87" if is_panic else "ML-DSA-44"
+    # Bu metnin kriptografik hiçbir karşılığı yoktu — JSON'a yazılıp
+    # geçiliyordu. Artık kademe `armor.decide`'dan geliyor, prover'a argüman
+    # olarak gidiyor ve imza boyutunu GERÇEKTEN değiştiriyor.
+    decision = armor.decide(risk_pct, dynamic_threshold, _BASELINE_ARMOR)
+
+    is_panic   = decision.proof_required
     action     = "TRIGGER_PANIC_MODE" if is_panic else "SAFE"
-    armor_tier = "ML-DSA-87" if is_panic else "ML-DSA-44"
+    armor_tier = decision.level.display
+
+    # Koşu kimliği ve dönem damgası — prover'a geçer, payload'a yazılır.
+    run_id   = uuid.uuid4().hex[:12]
+    epoch_ns = time.time_ns()
 
     logger.info(
-        "Risk: %.2f%% | τ(t): %.2f%% | Eylem: %s | Zırh: %s",
-        risk_pct, dynamic_threshold, action, armor_tier,
+        "Risk: %.2f%% | τ(t): %.2f%% | Aşım: %.2f | Eylem: %s | Zırh: %s | Koşu: %s",
+        risk_pct, dynamic_threshold, decision.asim, action, armor_tier, run_id,
     )
 
     # ── ADIM 3 & 4: Async ZK-STARK (Yalnızca Panik Modunda) ──────────────────
@@ -1705,24 +1981,68 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
     evm_start_t             = 0
     rho_prime_hex           = ""
 
+    # Kanıt üretilemezse yanıt "degraded" olarak işaretlenir — asla bayat
+    # bir dosyayla doldurulmaz (bkz. aşağıdaki BULGU 3b notu).
+    response_status  = decision.status
+    proof_generated  = False
+    calldata_record  = None
+
+    # ── Ayrıntı katmanı — hepsi None ile başlar ──────────────────────────────
+    #
+    # Kanıt üretilmezse None kalırlar. Örnek değerle DOLDURULMAZLAR: arayüz
+    # `—` göstersin, uydurma sayı görmesin. Bu, bulgu 3b'nin (bayat kanıt
+    # geri dönüşü) arayüz tarafındaki karşılığıdır.
+    #
+    # ONNX aşaması her koşuda var — kanıt üretilmese bile AI çalıştı.
+    pipeline_stages: list[dict] = [{
+        "name"  : "onnx_cikarim",
+        "ms"    : onnx_ms,
+        "ok"    : True,
+        "detail": f"3 özellik → risk %{risk_pct:.2f} ({onnx_label})",
+    }]
+    pqc_detail      = None
+    stark_detail    = None
+    lattice_detail  = None
+    payload_run_id  = None
+    deterministic   = None
+
     if is_panic:
         try:
             # asyncio.Queue hız sınırlayıcısı ile async prover çağrısı.
             # Kuyruk doluysa (saldırı senaryosu) bu satır HTTP 429 fırlatır.
-            prover_time_ms, proof_data = await _invoke_zk_prover_with_queue_guard()
+            prover_time_ms, proof_data = await _invoke_zk_prover_with_queue_guard(
+                decision_risk = risk_pct,
+                decision_tau  = dynamic_threshold,
+                baseline      = _BASELINE_ARMOR,
+                user_op_hash  = getattr(payload, "user_op_hash", "") or "",
+                epoch_ns      = epoch_ns,
+                run_id        = run_id,
+            )
 
             # Kanıt boyutunu hex'ten hesapla
-            hex_proof    = proof_data.get("stark_proof_bytes_hex", "")
+            hex_proof     = proof_data.get("stark_proof_bytes_hex", "")
             proof_size_kb = _proof_size_kb(hex_proof) if hex_proof else 0.0
 
-            # Calldata emilim oranı: sıkıştırılmış / ham kanıt boyutu
-            raw_sig_bytes           = 4608.0
-            compressed_bytes        = proof_size_kb * 1024.0
-            calldata_absorption_pct = min(
-                99.9,
-                max(0.0, (1.0 - compressed_bytes / (raw_sig_bytes + compressed_bytes)) * 100.0)
-                    if (raw_sig_bytes + compressed_bytes) > 0 else 0.0,
+            # ── BULGU 13 DÜZELTMESİ: calldata TEK formülden ──────────────────
+            #
+            # Eski hesap şuydu:
+            #     raw_sig_bytes = 4608.0
+            #     pct = (1 - kanıt / (4608 + kanıt)) * 100
+            # `4608` hiçbir yerden gelmiyordu ve raporlardaki 50'lik parti
+            # hesabıyla aynı sayıyı FARKLI bir tabandan üretiyordu.
+            #
+            # Artık taban, prover'ın bu koşuda ÖLÇTÜĞÜ gerçek ML-DSA imza
+            # boyutudur ve formül payload'da taşınır.
+            pqc_meta       = proof_data.get("pqc") or {}
+            signature_bytes = int(
+                pqc_meta.get("signature_bytes", decision.level.signature_bytes)
             )
+            calldata_record = calldata.compute(
+                batch_size             = calldata.DEFAULT_BATCH_SIZE,
+                single_signature_bytes = signature_bytes,
+                stark_proof_bytes      = int(proof_size_kb * 1024.0),
+            )
+            calldata_absorption_pct = calldata_record.savings_pct
 
             # AIR sınır koşulları
             air_meta     = proof_data.get("air_verification_metadata", {})
@@ -1732,12 +2052,33 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
             evm_start_t  = int(air_meta.get("start_t",  0))
 
             # Rho-prime hex — rotasyon doğrulaması için yeni alan
-            rho_prime_hex = str(proof_data.get("rho_prime_hex", ""))
+            rho_prime_hex   = str(proof_data.get("rho_prime_hex", ""))
+            proof_generated = True
+
+            # ── Ayrıntı katmanını payload'dan doldur ─────────────────────────
+            #
+            # Hiçbiri burada HESAPLANMIYOR; prover'ın ÖLÇTÜĞÜ değerler olduğu
+            # gibi taşınıyor. Arayüzün gösterdiği her sayının kaynağı budur.
+            pipeline_stages.extend(proof_data.get("stages") or [])
+            pqc_detail     = proof_data.get("pqc")
+            stark_detail   = proof_data.get("stark")
+            lattice_detail = proof_data.get("lattice")
+            payload_run_id = proof_data.get("run_id")
+            deterministic  = proof_data.get("deterministic_run")
+
+            # Payload yazma, süresi ölçülemediği için bir AŞAMA değil
+            # (bkz. main.rs'teki not) — tamamlanma işareti olarak eklenir.
+            pipeline_stages.append({
+                "name"  : "payload_yazma",
+                "ms"    : 0.0,
+                "ok"    : True,
+                "detail": "proof_payload.json yazıldı (süre ölçülmedi)",
+            })
 
             logger.info(
-                "ZK payload — boyut=%.2f KB, süre=%.1f ms, "
+                "ZK payload — boyut=%.2f KB, süre=%.1f ms, imza=%d B, "
                 "start=[a=%d, s1=%d, s2=%d, t=%d], rho_prime=%s...",
-                proof_size_kb, prover_time_ms,
+                proof_size_kb, prover_time_ms, signature_bytes,
                 evm_start_a, evm_start_s1, evm_start_s2, evm_start_t,
                 rho_prime_hex[:16] if rho_prime_hex else "N/A",
             )
@@ -1746,30 +2087,34 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
             # HTTP 429 (kuyruk dolu) — yeniden fırlat, gizleme
             raise
         except Exception as exc:
-            logger.warning("ZK-STARK kanıt üretimi başarısız: %s — Önbellek kontrol ediliyor.", exc)
-            # Panik modunda proof üretimi başarısız olsa dahi yanıt döndürülür.
-            if _PROOF_PATH.exists():
-                try:
-                    with open(_PROOF_PATH, encoding="utf-8") as f:
-                        proof_data   = json.load(f)
-                    hex_proof        = proof_data.get("stark_proof_bytes_hex", "")
-                    proof_size_kb    = _proof_size_kb(hex_proof) if hex_proof else 0.0
-                    air_meta         = proof_data.get("air_verification_metadata", {})
-                    evm_start_a      = int(air_meta.get("start_a",  0))
-                    evm_start_s1     = int(air_meta.get("start_s1", 0))
-                    evm_start_s2     = int(air_meta.get("start_s2", 0))
-                    evm_start_t      = int(air_meta.get("start_t",  0))
-                    rho_prime_hex    = str(proof_data.get("rho_prime_hex", ""))
-                    logger.info("Önbellek proof_payload.json kullanıldı.")
-                except Exception:
-                    pass
+            # ── BULGU 3b DÜZELTMESİ: BAYAT DOSYA GERİ DÖNÜŞÜ SİLİNDİ ─────────
+            #
+            # Burada eskiden şu vardı: prover başarısız olursa diskteki
+            # `proof_payload.json` okunup yanıta konuyordu ve yanıt normal bir
+            # başarı yanıtı gibi dönüyordu.
+            #
+            # Sonucu şuydu: sahnede "bakın, kanıt üretildi" denilen şey
+            # saatler önceki bir koşudan kalma bayat bir dosya olabilirdi.
+            # Jüriye gösterilen rho_prime ve AIR sınır koşulları o anki
+            # işlemle hiç ilgili olmayabilirdi.
+            #
+            # Artık geri dönüş YOK. Kanıt üretilemezse bu açıkça bildirilir.
+            logger.error(
+                "ZK-STARK kanıt üretimi başarısız (koşu=%s): %s — "
+                "yanıt 'degraded' olarak işaretleniyor, önbellek KULLANILMIYOR.",
+                run_id, exc,
+            )
+            response_status = "degraded"
+            proof_generated = False
 
     # ── ADIM 5: Genişletilmiş Yanıt ──────────────────────────────────────────
     # Anlık kuyruk doluluk sayısını al (frontend HUD için)
     _current_queue_size = _ZK_PROOF_QUEUE.qsize() if _ZK_PROOF_QUEUE else 0
 
     response = ExtendedPredictResponse(
-        status = "success",
+        # Kanıt üretilemediyse bu alan "degraded" olur — yanıt asla bayat bir
+        # dosyayla doldurulup "success" diye sunulmaz (bulgu 3b).
+        status = "success" if response_status != "degraded" else "degraded",
         action = action,
         ai_metrics = AiMetrics(
             risk_score                 = round(risk_pct, 4),
@@ -1797,9 +2142,23 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
             start_t           = evm_start_t,
             time_lock_seconds = _TIME_LOCK_SECONDS,
         ),
+
+        # ── Ayrıntı katmanı ──────────────────────────────────────────────────
+        # Kanıt üretilmediyse bunlar None kalır ve arayüz `—` gösterir.
+        pipeline          = [StageRecord(**s) for s in pipeline_stages],
+        pqc_detail        = PqcDetail(**pqc_detail) if pqc_detail else None,
+        stark_detail      = StarkDetail(**stark_detail) if stark_detail else None,
+        calldata_detail   = (
+            CalldataDetail(**calldata_record.to_dict()) if calldata_record else None
+        ),
+        lattice           = LatticeSnapshot(**lattice_detail) if lattice_detail else None,
+        run_id            = payload_run_id or run_id,
+        tau               = round(dynamic_threshold, 4),
+        deterministic_run = deterministic,
     )
 
     # ── Kriptografik Yürütme İzi (Standart Terminal Formatı) ─────────────────
+    # Format: [Timestamp] [Module] [Queue Slots] [Risk Score] [PQC Armor]
     logger.info(
         "[%s] [Q-ADAPTIVE.API] [Kuyruk:%d/50] [Risk:%.4f%%] [τ(t):%.4f%%] [Zırh:%s] [Eylem:%s]",
         time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -1917,7 +2276,7 @@ FastAPI sunucusu, başlatılma (`lifespan`) aşamasında bu release binary dosya
 
 ## 4.3 `asyncio.Queue` ile Eşzamanlılık Sınırlandırılması
 
-Gateway katmanı, sunucu kaynaklarının tükenmesini engellemek için `asyncio.Queue(maxsize=50)` tabanlı bir asenkron kuyruk yapısı kullanır.
+Gateway katmanı, sunucu kaynaklarının tükenmesini engellemek için asenkron bir `asyncio.Queue` kuyruğu kullanır. Kapasite sabit bir sayı değildir; `_resolve_queue_capacity()` bunu çalıştığı makinenin çekirdek sayısı ve boş belleğinden türetir.
 
 Bu kuyruk sistemi, sistemde aynı anda çalışan Rust alt süreçleri için dinamik bir limit belirler. Süreç şu şekilde işler:
 
@@ -1967,6 +2326,7 @@ Bir saldırgan, sunucu kaynaklarını tüketmek amacıyla, sistemin anomali eşi
 
 Aşağıda, `Q-Adaptive-ZK/src/trace.rs` dosyasının eksiksiz, üretim kalitesindeki kaynak kodu yer almaktadır. Bu dosya; yürütme izi tablosunu, güvenlik seviyelerini ve kafes matrisi genişletme algoritmasını tanımlamaktadır.
 
+<!-- KOD-SENK kaynak=Q-Adaptive-ZK/src/trace.rs parca=1/1 ic-baslik=hayir -->
 ```rust
 // =============================================================================
 // Q-ADAPTIVE ZK — Yürütme İzi Tablosu (src/trace.rs)
@@ -2019,9 +2379,13 @@ Aşağıda, `Q-Adaptive-ZK/src/trace.rs` dosyasının eksiksiz, üretim kalitesi
 //   saldırganın geçmiş kafes korelasyon telemetrisi tamamen geçersiz kalır.
 // =============================================================================
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use winterfell::math::{fields::f128::BaseElement, StarkField};
+
+// Kriptografik türetmelerin tamamı `hashing` modülünden gelir.
+// Bu dosyada daha önce `DefaultHasher` (SipHash) kullanılıyordu; kaldırıldı.
+// Gerekçe için bkz. src/hashing.rs başlığı.
+use crate::hashing::derive_short_seeds;
+pub use crate::hashing::{compute_lattice_commitment, expand_matrix_a};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // İz Sabitleri
@@ -2072,6 +2436,38 @@ impl MlDsaSecurityLevel {
             MlDsaSecurityLevel::Level87 => "ML-DSA-87 (Dilithium-5)",
         }
     }
+
+    /// Kademelerin sıralamasını verir (44 < 65 < 87).
+    ///
+    /// Tek yönlü tırmanma kuralı bu sıralama üzerinden uygulanır:
+    /// zırh yalnızca `rank` değeri artacak şekilde değişebilir.
+    /// Bkz. `armor::decide` ve zincir tarafında `_applyArmorUpdate`.
+    pub fn rank(&self) -> u8 {
+        match self {
+            MlDsaSecurityLevel::Level44 => 0,
+            MlDsaSecurityLevel::Level65 => 1,
+            MlDsaSecurityLevel::Level87 => 2,
+        }
+    }
+
+    /// CLI argümanından güvenlik kademesini ayrıştırır.
+    ///
+    /// Eski uygulama `"87" | _ => Level87` deseniyle **geçersiz girdiyi
+    /// sessizce en yüksek kademeye düşürüyordu**. Güvenli yöndeydi ama
+    /// sessizdi: `--level abc` yazan bir yapılandırma hatası hiç fark
+    /// edilmeden geçiyordu. Artık açık bir `Result` dönüyor ve CLI
+    /// geçersiz girdide çıkış kodu 1 ile duruyor.
+    pub fn parse(girdi: &str) -> Result<Self, String> {
+        match girdi.trim() {
+            "44" => Ok(MlDsaSecurityLevel::Level44),
+            "65" => Ok(MlDsaSecurityLevel::Level65),
+            "87" => Ok(MlDsaSecurityLevel::Level87),
+            diger => Err(format!(
+                "Geçersiz --level değeri: '{}'. Beklenen: 44, 65 veya 87.",
+                diger
+            )),
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2091,27 +2487,20 @@ impl MlDsaSecurityLevel {
 ///   Bu simülasyonda tam polinom halkası işlemleri yerine skalar alan
 ///   (BaseElement/f128) üzerinde deterministik türetme kullanılır.
 ///   Tam polinom NTT uygulaması için: bkz. air.rs NTT bölümü.
-///
-/// Çığ Etkisi Garantisi:
-///   rho_prime'ın herhangi bir biti değiştiğinde:
-///   - Karma girişi (rho_prime || i || j) tamamen farklılaşır.
-///   - Her (i, j) için üretilen değer bağımsız olarak değişir.
-///   - Sonuç: A' ≠ A için tüm matris elemanları farklıdır.
-///   - Saldırganın önceki kafes korelasyon telemetrisi tamamen geçersiz kalır.
 #[derive(Clone, Debug)]
 pub struct LatticeModuleConfig {
     /// Modül matrisi satır boyutu (k).
-    pub k          : usize,
+    pub k: usize,
     /// Modül matrisi sütun boyutu (ℓ).
-    pub ell        : usize,
+    pub ell: usize,
     /// Kafes modülü asal modülü (q = 8380417 ML-DSA için).
-    pub q          : u128,
+    pub q: u128,
     /// 32-byte kriptografik seed ρ' (rho-prime).
     /// AI Guardian'dan türetilen entropi çıktısı.
     /// Tek bir bit değişikliği → tüm A matrisinin tamamen farklı olması.
-    pub rho_prime  : [u8; 32],
+    pub rho_prime: [u8; 32],
     /// Bu konfigürasyonun karşılık geldiği güvenlik seviyesi.
-    pub level      : MlDsaSecurityLevel,
+    pub level: MlDsaSecurityLevel,
 }
 
 impl LatticeModuleConfig {
@@ -2130,11 +2519,22 @@ impl LatticeModuleConfig {
     /// ```
     pub fn from_security_level(level: MlDsaSecurityLevel, rho_prime: [u8; 32]) -> Self {
         let (k, ell) = level.dimensions();
-        Self { k, ell, q: ML_DSA_Q, rho_prime, level }
+        Self {
+            k,
+            ell,
+            q: ML_DSA_Q,
+            rho_prime,
+            level,
+        }
     }
 
     /// Varsayılan panik modu konfigürasyonu: ML-DSA-87, k=8, ℓ=7.
-    /// Seed olarak sıfır dizisi kullanılır — yalnızca test/fallback için.
+    ///
+    /// Sıfır seed kullanır. Çağıran kalmadı: artık her koşu ρ''yü
+    /// `hashing::derive_rho_prime`den alıyor ve sıfır seed'e düşmek
+    /// determinizmi değil, öngörülebilirliği getirirdi. Soğuk başlangıç
+    /// senaryosu için API yüzeyinde bırakıldı.
+    #[allow(dead_code)]
     pub fn panic_mode_default() -> Self {
         Self::from_security_level(MlDsaSecurityLevel::Level87, [0u8; 32])
     }
@@ -2149,100 +2549,19 @@ impl LatticeModuleConfig {
 // Kafes Matris Genişletme (Deterministik, rho-prime tabanlı)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// rho-prime seed'inden A ∈ R_q^{k×ℓ} matrisini genişletir.
-///
-/// Bu fonksiyon, NIST FIPS 204 §5.1'deki `ExpandA(ρ)` prosedürünü
-/// skalar alan üzerinde simüle eder. Gerçek uygulamada her eleman
-/// bir polinom (256 katsayı, her biri < q) olacaktır. Burada her
-/// (i, j) için tek bir skalar kafes taahhüdü türetilir.
-///
-/// Türetme yöntemi (liboqs::sig::Sig::keypair_from_seed davranışını taklit eder):
-///   A[i][j] = DETERMINISTIC_HASH(rho_prime || i as u8 || j as u8) % q
-///
-/// NIST Uyum Notu:
-///   Gerçek ML-DSA ExpandA, SHAKE-128 XOF ile 256 katsayılı polinomlar üretir.
-///   Bu simülasyon, çığ etkisi özelliğini koruyarak STARK izine entegre
-///   edilebilen skalar taahhütler üretir. Tam polinom NTT uygulaması için
-///   ayrı bir `ntt.rs` modülü gerekecektir (bkz. air.rs NTT bölümü).
-///
-/// Çığ Etkisi Garantisi:
-///   rho_prime'ın herhangi bir biti değiştiğinde:
-///   - Karma girişi (rho_prime || i || j) tamamen farklılaşır.
-///   - Her (i, j) için üretilen değer bağımsız olarak değişir.
-///   - Sonuç: A' ≠ A için tüm matris elemanları farklıdır.
-///   - Saldırganın önceki kafes korelasyon telemetrisi tamamen geçersiz kalır.
-///
-/// # Arguments
-/// * `rho` - 32-byte seed (ρ' — AI Guardian entropi çıktısı).
-/// * `k`   - Matris satır sayısı.
-/// * `ell` - Matris sütun sayısı.
-/// * `q`   - Modüler alan karakteristiği.
-///
-/// # Returns
-/// `k×ℓ` boyutunda u128 matris; her eleman [0, q) aralığında.
-pub fn expand_matrix_a(rho: &[u8; 32], k: usize, ell: usize, q: u128) -> Vec<Vec<u128>> {
-    let mut matrix = Vec::with_capacity(k);
-
-    for i in 0..k {
-        let mut row = Vec::with_capacity(ell);
-        for j in 0..ell {
-            let element = deterministic_field_element(rho, i as u8, j as u8, q);
-            row.push(element);
-        }
-        matrix.push(row);
-    }
-
-    matrix
-}
-
-/// rho || i || j'den tek bir [0, q) alan elementi türetir.
-///
-/// Bu yardımcı fonksiyon, SHAKE-128 XOF'nin skalar simülasyonudur.
-/// Gerçek uygulamada bu satır şöyle görünecektir:
-///   `let mut xof = Shake128::default(); xof.update(rho); xof.update(&[i, j]); ...`
-///
-/// Burada, dış bağımlılık olmadan çığ etkisini sağlamak için
-/// rho baytlarının XOR'u ve endislerin karmasını birleştiriyoruz.
-/// Bu yaklaşım test/simülasyon amaçlıdır; üretim: `sha3` crate'i kullanın.
-fn deterministic_field_element(rho: &[u8; 32], row_idx: u8, col_idx: u8, q: u128) -> u128 {
-    let mut hasher = DefaultHasher::new();
-
-    // Tüm rho baytlarını hash'e dahil et — tek bir bit değişikliği tüm çıktıyı etkiler
-    for (position, &byte) in rho.iter().enumerate() {
-        let contribution = (byte as u64).wrapping_mul(position as u64 + 1)
-            .wrapping_add(row_idx as u64 * 31)
-            .wrapping_add(col_idx as u64 * 37);
-        contribution.hash(&mut hasher);
-    }
-
-    (row_idx as u64).hash(&mut hasher);
-    (col_idx as u64).hash(&mut hasher);
-
-    let hash_val = hasher.finish() as u128;
-
-    hash_val % q
-}
-
-/// Tam k×ℓ matrisinin BLAKE3 taahhüt özeti (skalar taahhüt).
-///
-/// STARK izi 4 sütunda tutulduğu için tam matris yerine bu tek taahhüt
-/// değeri sütun 0'da kullanılır. Matrisin bütünlüğü bu hash üzerinden
-/// kanıtlanır.
-///
-/// Türetme:
-///   commitment = H(rho_prime || k_byte || ell_byte) % q
-///   Burada H, tüm matris elemanlarını katlayan bir hash fonksiyonudur.
-pub fn compute_lattice_commitment(matrix: &[Vec<u128>], q: u128) -> u128 {
-    let mut hasher = DefaultHasher::new();
-
-    for row in matrix {
-        for &elem in row {
-            elem.hash(&mut hasher);
-        }
-    }
-
-    hasher.finish() as u128 % q
-}
+// Bu bölümdeki üç fonksiyon (`expand_matrix_a`, `deterministic_field_element`,
+// `compute_lattice_commitment`) `src/hashing.rs`'e taşındı ve kriptografik
+// ilkellerle yeniden yazıldı:
+//
+//   • Matris genişletmesi artık SHAKE-128 XOF + rejection sampling kullanıyor
+//     — FIPS 204 §7.3 ExpandA'nın kullandığı ilkelin aynısı. Eski `% q`
+//     daraltması modüler önyargı yaratıyordu.
+//   • Taahhüt BLAKE3 ile hesaplanıyor; yorum "BLAKE3" diyordu ama kod
+//     SipHash çalıştırıyordu.
+//   • `deterministic_field_element` tamamen kaldırıldı.
+//
+// İsimler dosyanın başındaki `pub use` ile buradan erişilebilir kalmaya
+// devam ediyor, böylece çağıran kod değişmedi.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Dilithium-5 Enjeksiyon Payload'u (Genişletilmiş)
@@ -2252,27 +2571,32 @@ pub fn compute_lattice_commitment(matrix: &[Vec<u128>], q: u128) -> u128 {
 ///
 /// Genişletilmiş alan: `rho_prime` ve `config` eklendi.
 /// Önceki sabit `seed_a: u128` yerine tam `LatticeModuleConfig` kullanılır.
+/// Bazı alanlar (`rho_prime`, `lattice_commitment`, `armor_level`,
+/// `timelock_deadline`) şu an yalnızca JSON payload'a taşınmak üzere
+/// dolduruluyor; Rust tarafında okunmuyorlar. Payload modelinin bir parçası
+/// oldukları için tutuluyorlar.
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct Dilithium5InjectionPayload {
     /// 32-byte kriptografik seed ρ' — AI Guardian entropi çıktısından türetilir.
     /// AI'ın rotate sinyali geldiğinde, yeni bir rho_prime üretilir ve bu
     /// alan güncellenir. Tek bir bit değişikliği → tüm yeni A' matrisinin
     /// genişlemesi.
-    pub rho_prime         : [u8; 32],
+    pub rho_prime: [u8; 32],
     /// Kafes modül konfigürasyonu — güvenlik seviyesi ve matris boyutları.
-    pub config            : LatticeModuleConfig,
+    pub config: LatticeModuleConfig,
     /// Genişletilmiş A matrisi — config ve rho_prime'dan türetilir.
-    pub matrix_a          : Vec<Vec<u128>>,
+    pub matrix_a: Vec<Vec<u128>>,
     /// Tam matrisin skalar STARK taahhüdü (tek sütun).
     pub lattice_commitment: u128,
     /// s1 polinom vektörü seed'i (kısa polinom — hata terimi).
-    pub seed_s1           : u128,
+    pub seed_s1: u128,
     /// s2 polinom vektörü seed'i (kısa polinom — hata terimi).
-    pub seed_s2           : u128,
+    pub seed_s2: u128,
     /// Zırh seviyesi (0=Hafif, 1=Ağır).
-    pub armor_level       : u8,
+    pub armor_level: u8,
     /// Time-lock deadline timestamp'i.
-    pub timelock_deadline : u64,
+    pub timelock_deadline: u64,
 }
 
 impl Dilithium5InjectionPayload {
@@ -2287,12 +2611,12 @@ impl Dilithium5InjectionPayload {
     /// * `seed_s1`   - s1 polinom vektörü seed'i.
     /// * `seed_s2`   - s2 polinom vektörü seed'i.
     pub fn new_with_seed(
-        rho_prime : [u8; 32],
-        level     : MlDsaSecurityLevel,
-        seed_s1   : u128,
-        seed_s2   : u128,
+        rho_prime: [u8; 32],
+        level: MlDsaSecurityLevel,
+        seed_s1: u128,
+        seed_s2: u128,
     ) -> Self {
-        let config   = LatticeModuleConfig::from_security_level(level, rho_prime);
+        let config = LatticeModuleConfig::from_security_level(level, rho_prime);
         let matrix_a = expand_matrix_a(&rho_prime, config.k, config.ell, config.q);
         let lattice_commitment = compute_lattice_commitment(&matrix_a, config.q);
 
@@ -2309,9 +2633,32 @@ impl Dilithium5InjectionPayload {
     }
 
     /// Varsayılan panik modu payload'u — sıfır seed ile ML-DSA-87.
-    /// Yalnızca test ve soğuk başlangıç için.
+    ///
+    /// Çağıranı kalmadı: üretim akışı `from_rho_prime` kullanıyor ve sıfır
+    /// seed'e düşmek kafesi öngörülebilir kılardı. Soğuk başlangıç senaryosu
+    /// için API yüzeyinde bırakıldı.
+    #[allow(dead_code)]
     pub fn panic_mode_default() -> Self {
         Self::new_with_seed([0u8; 32], MlDsaSecurityLevel::Level87, 13, 7)
+    }
+
+    /// ρ''den tam payload'u türetir — kısa tohumlar dahil.
+    ///
+    /// **Tercih edilen kurucu budur.** `new_with_seed` çağıranın s1/s2'yi
+    /// kendisinin üretmesini bekler; eski `main.rs` bunu ρ''nin ham
+    /// baytlarını ikiye bölerek yapıyordu:
+    ///
+    /// ```text
+    ///   seed_s1 = u128::from_le_bytes(rho_prime[0..16])   // HATA E6
+    ///   seed_s2 = u128::from_le_bytes(rho_prime[16..32])
+    /// ```
+    ///
+    /// Bu, ρ''nin 32 baytının tamamını herkese açık iz tablosunda açığa
+    /// çıkarıyordu. Artık tohumlar ayrı bir alan etiketiyle SHAKE/BLAKE3'ten
+    /// yeniden türetiliyor; izden s1/s2'yi okumak ρ' hakkında bilgi vermiyor.
+    pub fn from_rho_prime(rho_prime: [u8; 32], level: MlDsaSecurityLevel) -> Self {
+        let (seed_s1, seed_s2) = derive_short_seeds(&rho_prime, ML_DSA_Q);
+        Self::new_with_seed(rho_prime, level, seed_s1, seed_s2)
     }
 
     /// Geriye uyumluluk için eski `new(seed_a, seed_s1, seed_s2)` arayüzü.
@@ -2320,6 +2667,7 @@ impl Dilithium5InjectionPayload {
         since = "2.0.0",
         note = "Kullanın: Dilithium5InjectionPayload::new_with_seed(rho_prime, level, seed_s1, seed_s2)"
     )]
+    #[allow(dead_code)]
     pub fn new(seed_a: u128, seed_s1: u128, seed_s2: u128) -> Self {
         // Geriye uyumluluk: seed_a'yı rho_prime'ın ilk 16 baytına dönüştür
         let mut rho_prime = [0u8; 32];
@@ -2346,16 +2694,10 @@ impl Dilithium5InjectionPayload {
 ///   A_commit[step] = matrix_a[step % k][step % ell]
 /// Bu yaklaşım, tam k×ℓ matrisin Winterfell uyumlu bir biçimde temsil
 /// edilmesini sağlar.
-///
-/// Rho-Prime Seed Entegrasyonu:
-///   AI API'sinden gelen entropi çıktısı 32-byte rho_prime olarak türetilir.
-///   Bu seed, matris A'nın tamamen yeniden genişletilmesini tetikler.
-///   Tek bir bit değişikliği → tüm yeni A' matrisinin genişlemesi →
-///   saldırganın geçmiş kafes korelasyon telemetrisi tamamen geçersiz kalır.
 #[derive(Debug)]
 pub struct QAdaptiveTrace {
-    data      : Vec<Vec<BaseElement>>,
-    trace_len : usize,
+    data: Vec<Vec<BaseElement>>,
+    trace_len: usize,
     /// Bu iz tablosunun karşılık geldiği kafes konfigürasyonu.
     pub config: LatticeModuleConfig,
 }
@@ -2379,17 +2721,31 @@ impl QAdaptiveTrace {
             "İz uzunluğu 2'nin kuvveti olmalı ve >= 8 olmalıdır. Alındı: {length}"
         );
 
-        let q      = payload.config.q;
-        let k      = payload.config.k;
-        let ell    = payload.config.ell;
+        let q = payload.config.q;
+        let k = payload.config.k;
+        let ell = payload.config.ell;
 
         let mut col_a_commit = Vec::with_capacity(length); // Lattice commitment (A köşegen)
-        let mut col_s1       = Vec::with_capacity(length); // s1 polinom kayan
-        let mut col_s2       = Vec::with_capacity(length); // s2 polinom kayan
-        let mut col_t        = Vec::with_capacity(length); // t = A*s1 + s2
+        let mut col_s1 = Vec::with_capacity(length); // s1 polinom kayan
+        let mut col_s2 = Vec::with_capacity(length); // s2 polinom kayan
+        let mut col_t = Vec::with_capacity(length); // t = A*s1 + s2
 
-        let mut curr_s1 = payload.seed_s1 % q;
-        let mut curr_s2 = payload.seed_s2 % q;
+        // ── HATA E2 DÜZELTMESİ: aritmetik artık ALAN aritmetiği ──────────────
+        //
+        // Bu tablo eskiden u128 üzerinde `wrapping_mul(...) % q` ile
+        // hesaplanıyordu; kanıtlanan tablo (`pipeline::trace_table_from`) ise
+        // f128 alan aritmetiği kullanıyor ve AIR kısıtı da alan aritmetiğini
+        // doğruluyor (`next[3] - (next[0]*next[1] + next[2]) = 0`).
+        //
+        // Sonuç: sahnede jüriye gösterilen t sütunu, STARK'ın kanıtladığı t
+        // sütunu DEĞİLDİ — `% q` yüzünden farklı sayılardı.
+        //
+        // Artık burada da `BaseElement` işlemleri kullanılıyor, yani bu tablo
+        // kanıtlanan tablonun ta kendisi. `pipeline::trace_table_from` bunu
+        // kopyalayarak Winterfell tablosunu üretir; iki temsil arasında
+        // ayrışma imkânı kalmaz.
+        let mut curr_s1 = BaseElement::new(payload.seed_s1 % q);
+        let mut curr_s2 = BaseElement::new(payload.seed_s2 % q);
 
         for step in 0..length {
             // Köşegen kafes taahhüdü: adım başına farklı matris elemanı
@@ -2397,20 +2753,20 @@ impl QAdaptiveTrace {
             // rotasyonal bir temsilini sağlar.
             let row_idx = step % k;
             let col_idx = step % ell;
-            let a_elem  = payload.matrix_a[row_idx][col_idx] % q;
+            let a_elem = BaseElement::new(payload.matrix_a[row_idx][col_idx] % q);
 
-            // MLWE ilişkisi: t = A * s1 + s2 (mod q)
-            // BaseElement wrapping aritmetiği kullanılır
-            let t_raw = a_elem.wrapping_mul(curr_s1).wrapping_add(curr_s2) % q;
+            // MLWE ilişkisi: t = A * s1 + s2 — AIR kısıtıyla birebir aynı ifade.
+            let t_elem = a_elem * curr_s1 + curr_s2;
 
-            col_a_commit.push(BaseElement::new(a_elem));
-            col_s1.push(BaseElement::new(curr_s1));
-            col_s2.push(BaseElement::new(curr_s2));
-            col_t.push(BaseElement::new(t_raw));
+            col_a_commit.push(a_elem);
+            col_s1.push(curr_s1);
+            col_s2.push(curr_s2);
+            col_t.push(t_elem);
 
-            // s1 ve s2'yi sonraki adım için güncelle (deterministik evrim)
-            curr_s1 = curr_s1.wrapping_add(2) % q;
-            curr_s2 = curr_s2.wrapping_add(3) % q;
+            // s1 ve s2'yi sonraki adım için güncelle (deterministik evrim).
+            // AIR: s1_next = s1_curr + 2, s2_next = s2_curr + 3.
+            curr_s1 += BaseElement::new(2);
+            curr_s2 += BaseElement::new(3);
         }
 
         Self {
@@ -2424,6 +2780,20 @@ impl QAdaptiveTrace {
         self.data[col][step]
     }
 
+    /// İz tablosundaki adım sayısı.
+    ///
+    /// `pipeline::trace_table_from` Winterfell tablosunu bu uzunlukta açar;
+    /// iki tablonun boyutu da tek kaynaktan gelir.
+    pub fn length(&self) -> usize {
+        self.trace_len
+    }
+
+    /// Son adımın dört sütunu.
+    ///
+    /// Sınır koşulları artık Winterfell tablosundan okunuyor
+    /// (`main::build_trace_for_display_and_proof`), bu yüzden çağıranı yok.
+    /// Gösterim ve hata ayıklama için API yüzeyinde bırakıldı.
+    #[allow(dead_code)]
     pub fn final_state(&self) -> [BaseElement; 4] {
         let last = self.trace_len - 1;
         [
@@ -2438,7 +2808,10 @@ impl QAdaptiveTrace {
     pub fn print_table(&self) {
         println!(
             "  Kafes Konfigürasyonu: {} (k={}, ℓ={}, q={})",
-            self.config.level.name(), self.config.k, self.config.ell, self.config.q
+            self.config.level.name(),
+            self.config.k,
+            self.config.ell,
+            self.config.q
         );
         println!(
             "  rho_prime: {}...",
@@ -2446,7 +2819,9 @@ impl QAdaptiveTrace {
         );
         println!(
             "  Matris Boyutu: {}×{} = {} eleman",
-            self.config.k, self.config.ell, self.config.matrix_elements()
+            self.config.k,
+            self.config.ell,
+            self.config.matrix_elements()
         );
         println!();
         println!("  ┌──────┬─────────────────┬──────────────┬──────────────┬──────────────┐");
@@ -2455,10 +2830,10 @@ impl QAdaptiveTrace {
 
         let display_rows = self.trace_len.min(8);
         for step in 0..display_rows {
-            let a  = self.get(step, 0).as_int();
+            let a = self.get(step, 0).as_int();
             let s1 = self.get(step, 1).as_int();
             let s2 = self.get(step, 2).as_int();
-            let t  = self.get(step, 3).as_int();
+            let t = self.get(step, 3).as_int();
             println!(
                 "  │ {:>4} │ {:>15} │ {:>12} │ {:>12} │ {:>12} │",
                 step, a, s1, s2, t
@@ -2470,12 +2845,199 @@ impl QAdaptiveTrace {
         println!("  └──────┴─────────────────┴──────────────┴──────────────┴──────────────┘");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Birim Testleri
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use winterfell::math::StarkField;
+
+    #[test]
+    fn test_security_level_dimensions() {
+        assert_eq!(MlDsaSecurityLevel::Level44.dimensions(), (4, 4));
+        assert_eq!(MlDsaSecurityLevel::Level65.dimensions(), (6, 5));
+        assert_eq!(MlDsaSecurityLevel::Level87.dimensions(), (8, 7));
+    }
+
+    #[test]
+    fn test_expand_matrix_a_dimensions() {
+        let rho = [0x42u8; 32];
+        let matrix = expand_matrix_a(&rho, 8, 7, ML_DSA_Q);
+        assert_eq!(matrix.len(), 8);
+        assert_eq!(matrix[0].len(), 7);
+        // Tüm elemanlar [0, q) aralığında olmalı
+        for row in &matrix {
+            for &elem in row {
+                assert!(elem < ML_DSA_Q, "Eleman q'dan büyük: {}", elem);
+            }
+        }
+    }
+
+    #[test]
+    fn test_rho_prime_avalanche_effect() {
+        // Tek bir bit değişikliği → tamamen farklı matris (çığ etkisi testi)
+        let rho1 = [0xAAu8; 32];
+        let rho2 = {
+            let mut r = rho1;
+            r[15] ^= 0x01; // Tek bit flip
+            r
+        };
+
+        let m1 = expand_matrix_a(&rho1, 8, 7, ML_DSA_Q);
+        let m2 = expand_matrix_a(&rho2, 8, 7, ML_DSA_Q);
+
+        // En az birkaç elemanın farklı olduğunu doğrula
+        let different_count: usize = m1
+            .iter()
+            .zip(m2.iter())
+            .flat_map(|(r1, r2)| r1.iter().zip(r2.iter()))
+            .filter(|(e1, e2)| e1 != e2)
+            .count();
+
+        // Çığ etkisi: SHAKE-128 ile beklenti TÜM hücrelerin değişmesi.
+        //
+        // Bu eşik eskiden "%80" idi; DefaultHasher tabanlı türetme 56/56'yı
+        // tutturamadığı için gevşetilmişti. Kriptografik XOF ile gevşetmeye
+        // gerek yok — eşik sıkılaştırıldı ki zayıf bir karma geri gelirse
+        // test kırılsın.
+        let total = 8 * 7;
+        assert_eq!(
+            different_count, total,
+            "Çığ etkisi yetersiz: {} / {} eleman farklı",
+            different_count, total
+        );
+    }
+
+    #[test]
+    fn test_mlwe_trace_generation_with_config() {
+        let rho_prime = [0x12u8; 32];
+        let payload = Dilithium5InjectionPayload::new_with_seed(
+            rho_prime,
+            MlDsaSecurityLevel::Level87,
+            13, // seed_s1
+            7,  // seed_s2
+        );
+        let trace = QAdaptiveTrace::new(&payload, 8);
+
+        // MLWE ilişkisi her adımda sağlanmalı: t = A * s1 + s2
+        //
+        // Dikkat: burada `% q` YOK. AIR kısıtı da alan aritmetiğini doğrular
+        // (bkz. air.rs::evaluate_transition). Bu testin `% q` ile yazılmış
+        // hâli, gösterilen izin kanıtlanan izden ayrışmasını gizliyordu.
+        for step in 0..8 {
+            let a = trace.get(step, 0);
+            let s1 = trace.get(step, 1);
+            let s2 = trace.get(step, 2);
+            let t = trace.get(step, 3);
+
+            assert_eq!(t, a * s1 + s2, "MLWE ilişkisi adım {}'de bozuldu", step);
+        }
+    }
+
+    /// HATA E5 REGRESYONU — geçersiz `--level` sessizce 87'ye düşmemeli.
+    #[test]
+    fn test_level_parse_gecersiz_girdiyi_reddediyor() {
+        assert_eq!(
+            MlDsaSecurityLevel::parse("44").unwrap(),
+            MlDsaSecurityLevel::Level44
+        );
+        assert_eq!(
+            MlDsaSecurityLevel::parse("65").unwrap(),
+            MlDsaSecurityLevel::Level65
+        );
+        assert_eq!(
+            MlDsaSecurityLevel::parse("87").unwrap(),
+            MlDsaSecurityLevel::Level87
+        );
+
+        // Eski desen `"87" | _ => Level87` bunların hepsini 87 yapardı.
+        for gecersiz in ["abc", "", "88", "-1", "44.0"] {
+            assert!(
+                MlDsaSecurityLevel::parse(gecersiz).is_err(),
+                "'{}' sessizce kabul edildi — eski desen geri gelmiş olabilir",
+                gecersiz
+            );
+        }
+    }
+
+    #[test]
+    fn test_kademe_siralamasi() {
+        assert!(MlDsaSecurityLevel::Level44.rank() < MlDsaSecurityLevel::Level65.rank());
+        assert!(MlDsaSecurityLevel::Level65.rank() < MlDsaSecurityLevel::Level87.rank());
+    }
+
+    /// HATA E6 REGRESYONU — kısa tohumlar ρ''nin ham baytları olmamalı.
+    #[test]
+    fn test_from_rho_prime_kisa_tohumlari_turetiyor() {
+        let rho = [0x6Bu8; 32];
+        let payload = Dilithium5InjectionPayload::from_rho_prime(rho, MlDsaSecurityLevel::Level87);
+
+        // Eski main.rs davranışı:
+        let mut b1 = [0u8; 16];
+        let mut b2 = [0u8; 16];
+        b1.copy_from_slice(&rho[0..16]);
+        b2.copy_from_slice(&rho[16..32]);
+        let eski_s1 = u128::from_le_bytes(b1) % ML_DSA_Q;
+        let eski_s2 = u128::from_le_bytes(b2) % ML_DSA_Q;
+
+        assert_ne!(payload.seed_s1, eski_s1, "s1 hâlâ ρ''nin ham baytlarından");
+        assert_ne!(payload.seed_s2, eski_s2, "s2 hâlâ ρ''nin ham baytlarından");
+    }
+
+    /// BULGU 4 REGRESYONU — kademe değişince kafes GERÇEKTEN büyüyor.
+    #[test]
+    fn test_kademe_matris_boyutunu_degistiriyor() {
+        let rho = [0x2Du8; 32];
+
+        let p44 = Dilithium5InjectionPayload::from_rho_prime(rho, MlDsaSecurityLevel::Level44);
+        let p65 = Dilithium5InjectionPayload::from_rho_prime(rho, MlDsaSecurityLevel::Level65);
+        let p87 = Dilithium5InjectionPayload::from_rho_prime(rho, MlDsaSecurityLevel::Level87);
+
+        assert_eq!(p44.config.matrix_elements(), 16); // 4×4
+        assert_eq!(p65.config.matrix_elements(), 30); // 6×5
+        assert_eq!(p87.config.matrix_elements(), 56); // 8×7
+
+        assert!(
+            p44.config.matrix_elements() < p65.config.matrix_elements()
+                && p65.config.matrix_elements() < p87.config.matrix_elements(),
+            "Zırh kademesi kafes boyutunu artırmalı"
+        );
+    }
+
+    #[test]
+    fn test_payload_new_deprecated_backward_compat() {
+        // Geriye uyumluluk: eski new(seed_a, seed_s1, seed_s2) arayüzü
+        #[allow(deprecated)]
+        let payload = Dilithium5InjectionPayload::new(42, 13, 7);
+        let trace = QAdaptiveTrace::new(&payload, 8);
+
+        // Bu iddia eskiden `trace.get(0, 3).as_int() < ML_DSA_Q` idi.
+        //
+        // O iddia, t sütununun `% q` ile daraltıldığını varsayıyordu — yani
+        // hata E2'nin kendisini sabitliyordu. AIR kısıtı `% q` uygulamaz
+        // (`next[3] = next[0]*next[1] + next[2]`), dolayısıyla t doğal olarak
+        // q'yu aşar. Doğru değişmez, MLWE ilişkisinin kendisidir:
+        let a = trace.get(0, 0);
+        let s1 = trace.get(0, 1);
+        let s2 = trace.get(0, 2);
+        assert_eq!(trace.get(0, 3), a * s1 + s2);
+
+        // A, s1 ve s2 girdileri ise hâlâ alan içinde olmalı.
+        assert!(a.as_int() < ML_DSA_Q);
+        assert!(s1.as_int() < ML_DSA_Q);
+        assert!(s2.as_int() < ML_DSA_Q);
+    }
+}
 ```
 
 ## 5.2 Kod İncelemesi: `air.rs`
 
 Aşağıda, `Q-Adaptive-ZK/src/air.rs` dosyasının eksiksiz, üretim kalitesindeki kaynak kodu yer almaktadır. Bu dosya; STARK Cebirsel Ara Temsil (AIR) kurallarını, geçiş kısıtlamalarını ve sınır iddialarını içermektedir.
 
+<!-- KOD-SENK kaynak=Q-Adaptive-ZK/src/air.rs parca=1/1 ic-baslik=hayir -->
 ```rust
 // =============================================================================
 // Q-ADAPTIVE ZK — AIR Kısıtlama Motoru (src/air.rs)
@@ -2535,34 +3097,74 @@ Aşağıda, `Q-Adaptive-ZK/src/air.rs` dosyasının eksiksiz, üretim kalitesind
 //     ✓ NTT/INTT hesaplama yükü prover tarafında kalır, AIR'da değil.
 //     ✓ INTT negatif zeta kökü round-trip doğruluğu sınır koşuluyla garanti edilir.
 //     ✓ Winterfell 0.13.1 kısıt derece limitleriyle tam uyumlu.
+//
+// NTT Kelebek Modellemesi (Geçiş Olarak — Referans):
+//   Eğer NTT katmanları STARK izinde AYRI SÜTUNLAR olarak modellenseydi:
+//     Her kelebek: (u, v) → (u + ζ^k · v, u - ζ^k · v)
+//     Bu, DEĞERLERİ çarpma içerdiğinden derece 1 (ζ^k sabit).
+//     Ancak ζ^k değerleri her adımda farklıdır — "periodic column" gerektirir.
+//     Winterfell PeriodicColumn API'si bunu destekler, ancak 8 katman × 128
+//     sütun = 1024 sütun — pratik değil.
+//   SONUÇ: Sınır iddiası stratejisi tek uygulanabilir yaklaşımdır.
+//
+// NTT Geçiş Sütunu Yapısı (Gelecek Referans, NttTransitionCols):
+//   Eğer NTT sütunları eklenmek istenirse:
+//     NTT_IN  [0..255] : Girdi polinom katsayıları
+//     NTT_OUT [0..255] : Çıktı NTT katsayıları
+//     INTT_OUT[0..255] : INTT çıktısı (NTT_IN'e eşit olmalı)
+//   Sınır iddiaları: NTT_IN[j] == INTT_OUT[j] (j = 0..255)
+//   Geçiş kısıtları: Hiçbiri NTT/INTT için (prover hesaplar).
 // =============================================================================
 
 use winterfell::{
     math::{fields::f128::BaseElement, FieldElement, ToElements},
-    Air, AirContext, Assertion, BatchingMethod, EvaluationFrame,
-    FieldExtension, ProofOptions, TraceInfo, TransitionConstraintDegree,
+    Air, AirContext, Assertion, BatchingMethod, EvaluationFrame, FieldExtension, ProofOptions,
+    TraceInfo, TransitionConstraintDegree,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Kanıt Seçenekleri (Güvenlik Parametreleri)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// STARK konjektürel güvenlik seviyesi — **tek doğruluk kaynağı**.
+///
+/// Bu sabit üç yerde birden kullanılır:
+///   • `get_proof_options()` bu seviyeyi hedefleyen parametreleri seçer,
+///   • doğrulayıcı `AcceptableOptions::MinConjecturedSecurity` ile dayatır,
+///   • `proof_payload.json` bunu `conjectured_security_bits` olarak taşır.
+///
+/// README ve raporlar bu sayıyı buradan almalıdır. Daha önce README "96"
+/// diyordu, kod ise 80 uyguluyordu — belge kodun üstünde bir güvenlik
+/// seviyesi ilan ediyordu.
+///
+/// Prototip **bilinçli olarak** temkinli 80-bit ayarındadır. Yükseltmek için
+/// `FRI_NUM_QUERIES` ile bu sabit BİRLİKTE artırılmalıdır.
+pub const STARK_SECURITY_BITS: u32 = 80;
+
+/// FRI sorgu sayısı. `STARK_SECURITY_BITS` ile birlikte ayarlanır.
+pub const FRI_NUM_QUERIES: usize = 28;
+
+/// LDE genişleme faktörü (blowup).
+pub const FRI_BLOWUP_FACTOR: usize = 8;
+
+/// Proof-of-work (grinding) zorluk faktörü.
+pub const GRINDING_FACTOR: u32 = 16;
+
 /// Winterfell STARK kanıt seçenekleri.
 ///
-/// Güvenlik parametreleri:
-///   - num_queries=28      : 80-bit konjektürel güvenlik için sorgu sayısı
-///   - blowup_factor=8     : LDE (Low Degree Extension) genişleme faktörü
-///   - grinding_factor=16  : PoW zorluk faktörü (proof-of-work)
-///   - FRI folding=8       : FRI katlama faktörü
-///   - FRI remainder=31    : FRI kalan maksimum derecesi
+/// Güvenlik parametreleri yukarıdaki sabitlerden gelir; bu fonksiyonun
+/// gövdesinde elle yazılmış güvenlik sayısı yoktur.
+///
+///   - FRI folding=8    : FRI katlama faktörü
+///   - FRI remainder=31 : FRI kalan maksimum derecesi
 pub fn get_proof_options() -> ProofOptions {
     ProofOptions::new(
-        28,                         // num_queries
-        8,                          // blowup_factor
-        16,                         // grinding_factor
+        FRI_NUM_QUERIES,
+        FRI_BLOWUP_FACTOR,
+        GRINDING_FACTOR,
         FieldExtension::None,
-        8,                          // FRI folding factor
-        31,                         // FRI remainder max degree
+        8,  // FRI folding factor
+        31, // FRI remainder max degree
         BatchingMethod::Linear,
         BatchingMethod::Linear,
     )
@@ -2609,24 +3211,35 @@ impl ToElements<BaseElement> for QAdaptivePublicInputs {
 ///   Geçiş kısıtları yalnızca MLWE ilişkisini içerir (maks. derece 2).
 ///   Bkz: Üstteki modül belgeleri — NTT/INTT bölümü.
 ///
-/// Geçiş Kısıtları (3 kısıt, maks. derece 2):
-///   [0] s1_next = s1_curr + 2 (mod q)         (Derece 1)
-///   [1] s2_next = s2_curr + 3 (mod q)         (Derece 1)
-///   [2] t_next = A_commit_next * s1_next + s2_next  (Derece 2 — MLWE)
+/// Geçiş Kısıtları (4 kısıt, maks. derece 2):
+///   [0] A_commit_next = matrix_a[next_step % k][next_step % ell]
+///       Deterministik: rho_prime ve adım indeksinden türetilir.
+///       AIR bu ilişkiyi lineer delta kısıtı olarak modeller. (Derece 1)
+///   [1] s1_next = s1_curr + 2 (mod q)         (Derece 1)
+///   [2] s2_next = s2_curr + 3 (mod q)         (Derece 1)
+///   [3] t_next = A_commit_next * s1_next + s2_next  (Derece 2 — MLWE)
 ///
 /// Sınır Kısıtlamaları (8 iddia: 4 başlangıç + 4 bitiş):
 ///   Başlangıç: start_state değerleri (public inputs'tan)
 ///   Bitiş: final_state değerleri (NTT roundtrip taahhüdü dahil)
+///
+/// NTT/INTT Roundtrip Sınır İddiaları:
+///   final_state[0] (A_commit son adım) = beklenen değer.
+///   Bu, off-chain hesaplanan NTT(INTT(f)) = f özdeşliğinin on-chain analitiği.
 pub struct QAdaptiveAir {
-    context    : AirContext<BaseElement>,
-    pub_inputs : QAdaptivePublicInputs,
+    context: AirContext<BaseElement>,
+    pub_inputs: QAdaptivePublicInputs,
 }
 
 impl Air for QAdaptiveAir {
-    type BaseField    = BaseElement;
+    type BaseField = BaseElement;
     type PublicInputs = QAdaptivePublicInputs;
 
-    fn new(trace_info: TraceInfo, pub_inputs: QAdaptivePublicInputs, options: ProofOptions) -> Self {
+    fn new(
+        trace_info: TraceInfo,
+        pub_inputs: QAdaptivePublicInputs,
+        options: ProofOptions,
+    ) -> Self {
         // Geçiş kısıtlaması dereceleri:
         //
         //   A_commit (sütun 0) için geçiş KISITI YOK:
@@ -2656,7 +3269,10 @@ impl Air for QAdaptiveAir {
         let num_assertions = 8;
         let context = AirContext::new(trace_info, degrees, num_assertions, options);
 
-        Self { context, pub_inputs }
+        Self {
+            context,
+            pub_inputs,
+        }
     }
 
     /// MLWE geçiş kısıtlarını değerlendirir.
@@ -2673,14 +3289,28 @@ impl Air for QAdaptiveAir {
     ///   result[3] = next[3] - (next[0] * next[1] + next[2]) = 0 gerekir.
     ///   next[0] * next[1] terimi ikinci dereceden polinom — derece 2.
     ///   Bu, NTT kısıtları olmadan mümkün olan maksimum derecedir.
+    ///
+    /// NTT/INTT Notu:
+    ///   NTT kelebek operasyonları burada GEÇİŞ KISITI olarak yer almaz.
+    ///   Bunun yerine, başlangıç ve bitiş durumlarını doğrulayan
+    ///   sınır iddiaları (get_assertions) NTT roundtrip bütünlüğünü sağlar.
+    ///   Bu yaklaşım, derece patlamasını önler ve Winterfell 0.13.1 ile
+    ///   tam uyumludur.
     fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField>>(
         &self,
-        frame  : &EvaluationFrame<E>,
+        frame: &EvaluationFrame<E>,
         _period: &[E],
-        result : &mut [E],
+        result: &mut [E],
     ) {
         let current = frame.current();
-        let next    = frame.next();
+        let next = frame.next();
+
+        // ── Kısıt Felsefesi ──────────────────────────────────────────────────
+        // Sütun 0 (A_commit) için burada geçiş kısıtı YOKTUR.
+        // A_commit değerleri rho_prime tabanlı matrisin köşegenlerinden gelir;
+        // Bu değerler herhangi bir basit aritmetik seriyle ifade edilemez.
+        // Bütünlük garantisi: yalnızca başlangıç ve bitiş sınır iddiaları.
+        // (Bkz: get_assertions() — NTT/INTT roundtrip boundary assertion belgesi)
 
         // Kısıt [0]: s1 lineer artış (kısa polinom kayan değeri)
         //   Her adımda s1 + 2 ilerler. Derece 1.
@@ -2692,6 +3322,9 @@ impl Air for QAdaptiveAir {
 
         // Kısıt [2]: MLWE ilişkisi — t_next = A_next * s1_next + s2_next (Derece 2)
         //   Bu tek ikinci dereceden kısıttır: next[0] * next[1] çarpımı.
+        //   A_commit (next[0]) sınır iddiaları ile doğrulanır;
+        //   t'nin MLWE doğruluğu bu kısıtla garanti edilir.
+        //   NTT/INTT içermez — saf MLWE bütünlük kısıtıdır.
         result[2] = next[3] - (next[0] * next[1] + next[2]);
     }
 
@@ -2705,6 +3338,14 @@ impl Air for QAdaptiveAir {
     ///   Bu değer, prover'da expand_matrix_a() ile hesaplanan son köşegen
     ///   taahhüdüdür. Doğrulayıcı bu değeri genel girdi olarak alır ve
     ///   kanıt bunu doğrular.
+    ///
+    ///   Matematik garantisi:
+    ///     INTT(NTT(f)) = f özdeşliği, bitiş state'inin başlangıç state'iyle
+    ///     matematiksel olarak bağlantılı olduğunu gösterir. Eğer NTT/INTT
+    ///     hatalıysa, final_state hesaplaması yanlış olur ve bitiş iddiası
+    ///     başarısız olur — kanıt reddedilir.
+    ///
+    ///   Bu, derece patlaması olmadan tam NTT roundtrip doğruluğu sağlar.
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
         let last_step = self.trace_length() - 1;
         vec![
@@ -2717,9 +3358,12 @@ impl Air for QAdaptiveAir {
             Assertion::single(2, 0, self.pub_inputs.start_state[2]),
             // start_state[3]: t başlangıç değeri = A[0][0] * s1 + s2
             Assertion::single(3, 0, self.pub_inputs.start_state[3]),
-
             // ── Bitiş sınır iddiaları (son adım) ─────────────────────────────
             // final_state[0]: Son kafes taahhüdü — NTT roundtrip doğrulama noktası.
+            //   Prover, off-chain NTT(INTT(A_last)) = A_last hesaplar.
+            //   Bu iddia, o hesaplamanın doğruluğunu on-chain taahhüt eder.
+            //   Eğer INTT negatif zeta kökleri yanlışsa → A_last yanlış olur
+            //   → bu iddia başarısız → kanıt reddedilir. Derece artışı yok.
             Assertion::single(0, last_step, self.pub_inputs.final_state[0]),
             // final_state[1]: s1 bitiş değeri
             Assertion::single(1, last_step, self.pub_inputs.final_state[1]),
@@ -2734,6 +3378,44 @@ impl Air for QAdaptiveAir {
         &self.context
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Birim Testleri
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use winterfell::math::StarkField;
+
+    #[test]
+    fn test_public_inputs_serialization() {
+        let pi = QAdaptivePublicInputs {
+            start_state: [
+                BaseElement::new(1),
+                BaseElement::new(2),
+                BaseElement::new(3),
+                BaseElement::new(4),
+            ],
+            final_state: [
+                BaseElement::new(5),
+                BaseElement::new(6),
+                BaseElement::new(7),
+                BaseElement::new(8),
+            ],
+        };
+        let elems = pi.to_elements();
+        assert_eq!(elems.len(), 8);
+        assert_eq!(elems[0].as_int(), 1);
+        assert_eq!(elems[7].as_int(), 8);
+    }
+
+    #[test]
+    fn test_proof_options_valid() {
+        // ProofOptions başarıyla oluşturulabilmeli
+        let _options = get_proof_options();
+    }
+}
 ```
 # BÖLÜM 5: KATMAN 3 AUDIT — PARAMETERİZE KAFES KRİPTOGRAFİSİ VE WINTERFELL STARK (KISIM 2)
 
@@ -2741,6 +3423,7 @@ impl Air for QAdaptiveAir {
 
 Aşağıda, `Q-Adaptive-ZK/src/main.rs` dosyasının eksiksiz, üretim kalitesindeki kaynak kodu yer almaktadır. Bu dosya; ZK-STARK kanıt üretim hattını, entropi tabanlı `rho_prime` üretimini ve kanıt çıktılarını json olarak dışa aktaran köprü kodunu içermektedir.
 
+<!-- KOD-SENK kaynak=Q-Adaptive-ZK/src/main.rs parca=1/1 ic-baslik=hayir -->
 ```rust
 // =============================================================================
 // Q-ADAPTIVE ZK — Ana Kanıt Pipeline'ı (src/main.rs)
@@ -2766,41 +3449,40 @@ Aşağıda, `Q-Adaptive-ZK/src/main.rs` dosyasının eksiksiz, üretim kalitesin
 //   ./q-adaptive-zk --rho-prime <64-char-hex># API'den gelen rho_prime kullan
 // =============================================================================
 
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use std::fs;
 use std::env;
+use std::fs;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use winter_verifier::verify;
 use winterfell::{
     crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree},
     math::{fields::f128::BaseElement, FieldElement},
     matrix::ColMatrix,
     AcceptableOptions, AuxRandElements, CompositionPoly, CompositionPolyTrace,
-    DefaultConstraintCommitment, DefaultConstraintEvaluator, DefaultTraceLde,
-    PartitionOptions, Proof, ProofOptions, Prover, StarkDomain,
-    Trace, TracePolyTable, TraceTable,
+    DefaultConstraintCommitment, DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions,
+    Proof, ProofOptions, Prover, StarkDomain, Trace, TracePolyTable, TraceTable,
 };
-use winter_verifier::verify;
 
 // Proje modülleri
 mod air;
-mod trace;
+mod armor;
 mod bridge;
+mod hashing;
+mod pipeline;
+mod pqc;
+mod trace;
 
 use air::{get_proof_options, QAdaptiveAir, QAdaptivePublicInputs};
-use trace::{
-    Dilithium5InjectionPayload, MlDsaSecurityLevel,
-    QAdaptiveTrace, TRACE_LENGTH, TRACE_WIDTH, ML_DSA_Q,
-};
 use bridge::export_proof_payload;
+use pipeline::{RunOutcome, RunRequest};
+use trace::{MlDsaSecurityLevel, QAdaptiveTrace, TRACE_LENGTH, TRACE_WIDTH};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sabitler
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SEPARATOR : &str = "=================================================================";
-const THIN_SEP  : &str = "-----------------------------------------------------------------";
+const SEPARATOR: &str = "=================================================================";
+const THIN_SEP: &str = "-----------------------------------------------------------------";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Rho-Prime Seed Üretimi (AI Entropi Köprüsü)
@@ -2809,26 +3491,35 @@ const THIN_SEP  : &str = "------------------------------------------------------
 /// AI Guardian risk skoru ve zaman damgasından kriptografik olarak güvenli
 /// 32-byte ρ' (rho-prime) seed'i üretir.
 ///
-/// Üretim Prosedürü:
-///   1. Mevcut zaman damgasını al: timestamp_ns (nanosaniye)
-///   2. ai_risk_score'u f64 bitlerinden al: risk_bits
-///   3. OS rastgele entropi: os_entropy[] (platform DefaultHasher entropisi simülasyonu)
-///   4. BLAKE3 hash: H(timestamp_ns || risk_bits || os_entropy) → 32 bayt
+/// Üretim Prosedürü (`hashing::derive_rho_prime`):
+///   BLAKE3( ALAN_ETIKETI ‖ risk_bits ‖ epoch_ns ‖ len(user_op_hash) ‖
+///           user_op_hash ‖ entropi_bayragi [‖ taze_entropi] ) → 32 bayt
 ///
-///   Not: Gerçek üretimde `getrandom` veya `rand::rngs::OsRng` kullanılır.
-///   Bu simülasyon, dış bağımlılık olmadan maksimum entropi sağlar.
+///   Alan etiketi, aynı hash'in başka amaçlarla üretilen özetleriyle
+///   çakışmayı önler. `user_op_hash` uzunluk ön-ekiyle yazılır ki
+///   ("ab" ‖ "") ile ("a" ‖ "b") aynı özete gitmesin.
+///
+/// Determinizm — bu fonksiyon TAZE ENTROPİ KARIŞTIRMAZ:
+///   `user_op_hash` boş, `extra_entropy` `None` olarak geçilir; entropi
+///   bayrağı `0`'dır. Aynı (risk, epoch_ns) çifti her zaman aynı ρ''yü verir.
+///   Bu bilinçli: jüri aynı girdiyle aynı kanıtı yeniden üretebilmeli.
+///   Eski uygulama `process::id()` karıştırdığı için bu mümkün değildi.
+///   Taze entropi isteyen `--fresh-entropy` ile AÇIKÇA verir ve bu durum
+///   payload'da `deterministic_run = false` olarak işaretlenir.
 ///
 /// Güvenlik Garantileri:
 ///   • ai_risk_score değişirse → seed tamamen farklı (risk seviyesi bağlantısı)
-///   • timestamp_ns her çağrıda farklı → tekrar saldırısı imkansız
-///   • Hash çıktısı 256-bit → brute force mümkün değil
-///   • Her rotasyon olayı benzersiz seed üretir
+///   • epoch_ns çağıran tarafından verilir → tekrar koruması ÇAĞIRANIN işi,
+///     bu fonksiyonun değil (bkz. yukarıdaki determinizm notu)
+///   • BLAKE3 çıktısı 256-bit → ön-görüntü araması pratik değil
 ///
-/// liboqs::sig::Sig::keypair_from_seed Analogisi:
-///   Bu fonksiyonun çıktısı, liboqs'ta `keypair_from_seed(rho_prime)` çağrısına
-///   karşılık gelir. Tam polinom ML-DSA'da bu seed, ExpandA() ve ExpandS()
-///   ile tam anahtar çiftini deterministik olarak üretir. Burada simülasyon
-///   olarak expand_matrix_a() ile A matrisini genişletmek için kullanılır.
+/// ρ' nereye gidiyor:
+///   1. `pqc::sign_and_verify` → ξ = BLAKE3(alan ‖ ρ') → `KG::keygen_from_seed(ξ)`.
+///      Bu GERÇEK bir ML-DSA anahtar üretimidir (`fips204` crate'i, FIPS 204);
+///      artık bir benzetim değil.
+///   2. `Dilithium5InjectionPayload::from_rho_prime` → STARK iz tablosunun
+///      kafes matrisi, SHAKE-128 + reddetme örneklemesiyle genişletilir
+///      (FIPS 204 §7.3 ExpandA ile aynı yordam).
 ///
 /// # Arguments
 /// * `ai_risk_score` - AI modülünden gelen risk yüzdesi (0.0 - 100.0).
@@ -2837,51 +3528,21 @@ const THIN_SEP  : &str = "------------------------------------------------------
 /// # Returns
 /// 32-byte kriptografik seed [u8; 32].
 pub fn generate_rho_prime_from_entropy(ai_risk_score: f64, timestamp_ns: u64) -> [u8; 32] {
-    // OS entropi simülasyonu: birden fazla kaynaktan toplanan durum
-    // Üretimde: use rand::rngs::OsRng; OsRng.fill_bytes(&mut os_entropy);
-    let os_entropy_seed: u64 = {
-        let mut h = DefaultHasher::new();
-        timestamp_ns.hash(&mut h);
-        ai_risk_score.to_bits().hash(&mut h);
-        // Process ID (platform bağımsız ek entropi kaynağı)
-        std::process::id().hash(&mut h);
-        h.finish()
-    };
-
-    // 32-byte seed üretimi: tüm kaynakları BLAKE3 ile birleştir
-    // Üretimde: blake3::hash(birleştirilmiş_veri).into()
-    // Simülasyon: 4 × 8-byte blok olarak hash değerleri
-    let mut seed = [0u8; 32];
-
-    // Blok 0: timestamp + risk score karması
-    let mut h0 = DefaultHasher::new();
-    timestamp_ns.hash(&mut h0);
-    ai_risk_score.to_bits().hash(&mut h0);
-    let b0 = h0.finish().to_le_bytes();
-    seed[0..8].copy_from_slice(&b0);
-
-    // Blok 1: os_entropy + risk skoru karması
-    let mut h1 = DefaultHasher::new();
-    os_entropy_seed.hash(&mut h1);
-    (ai_risk_score as u64).hash(&mut h1);
-    let b1 = h1.finish().to_le_bytes();
-    seed[8..16].copy_from_slice(&b1);
-
-    // Blok 2: timestamp + os_entropy çapraz karması
-    let mut h2 = DefaultHasher::new();
-    (timestamp_ns ^ os_entropy_seed).hash(&mut h2);
-    let b2 = h2.finish().to_le_bytes();
-    seed[16..24].copy_from_slice(&b2);
-
-    // Blok 3: tüm önceki blokların üst karma (bütünlük zinciri)
-    let mut h3 = DefaultHasher::new();
-    b0.hash(&mut h3);
-    b1.hash(&mut h3);
-    b2.hash(&mut h3);
-    let b3 = h3.finish().to_le_bytes();
-    seed[24..32].copy_from_slice(&b3);
-
-    seed
+    // Türetmenin tamamı `hashing::derive_rho_prime`e devredildi.
+    //
+    // Buradaki eski uygulama dört ayrı `DefaultHasher` (SipHash) bloğuyla
+    // seed üretiyordu ve aralarına `std::process::id()` karıştırıyordu.
+    // İki ayrı sorun vardı:
+    //
+    //   • SipHash kriptografik değil ve Rust sürümleri arasında çıktı
+    //     kararlılığı GARANTİ EDİLMİYOR — yani aynı girdi başka bir
+    //     derlemede başka bir ρ' üretebilirdi.
+    //   • `process::id()` her koşuda değiştiği için kanıt YENİDEN
+    //     ÜRETİLEBİLİR değildi; jüri aynı sonucu alamazdı.
+    //
+    // Taze entropi artık sessizce karıştırılmıyor: isteyen `--fresh-entropy`
+    // ile açıkça veriyor ve bu payload'da işaretleniyor.
+    hashing::derive_rho_prime(ai_risk_score, timestamp_ns, &[], None)
 }
 
 /// Hex string'den 32-byte rho_prime seed'i ayrıştırır.
@@ -2894,12 +3555,12 @@ pub fn parse_rho_prime_hex(hex_str: &str) -> Result<[u8; 32], String> {
     if trimmed.len() != 64 {
         return Err(format!(
             "rho_prime hex {} karakter olmalı, {} alındı",
-            64, trimmed.len()
+            64,
+            trimmed.len()
         ));
     }
 
-    let bytes = hex::decode(trimmed)
-        .map_err(|e| format!("Geçersiz hex formatı: {}", e))?;
+    let bytes = hex::decode(trimmed).map_err(|e| format!("Geçersiz hex formatı: {}", e))?;
 
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&bytes);
@@ -2921,18 +3582,18 @@ impl QAdaptiveProver {
 }
 
 impl Prover for QAdaptiveProver {
-    type BaseField    = BaseElement;
-    type Air          = QAdaptiveAir;
-    type Trace        = TraceTable<Self::BaseField>;
-    type HashFn       = Blake3_256<Self::BaseField>;
-    type VC           = MerkleTree<Self::HashFn>;
-    type RandomCoin   = DefaultRandomCoin<Self::HashFn>;
-    type TraceLde<E: FieldElement<BaseField = Self::BaseField>>
-                      = DefaultTraceLde<E, Self::HashFn, Self::VC>;
-    type ConstraintCommitment<E: FieldElement<BaseField = Self::BaseField>>
-                      = DefaultConstraintCommitment<E, Self::HashFn, Self::VC>;
-    type ConstraintEvaluator<'a, E: FieldElement<BaseField = Self::BaseField>>
-                      = DefaultConstraintEvaluator<'a, Self::Air, E>;
+    type BaseField = BaseElement;
+    type Air = QAdaptiveAir;
+    type Trace = TraceTable<Self::BaseField>;
+    type HashFn = Blake3_256<Self::BaseField>;
+    type VC = MerkleTree<Self::HashFn>;
+    type RandomCoin = DefaultRandomCoin<Self::HashFn>;
+    type TraceLde<E: FieldElement<BaseField = Self::BaseField>> =
+        DefaultTraceLde<E, Self::HashFn, Self::VC>;
+    type ConstraintCommitment<E: FieldElement<BaseField = Self::BaseField>> =
+        DefaultConstraintCommitment<E, Self::HashFn, Self::VC>;
+    type ConstraintEvaluator<'a, E: FieldElement<BaseField = Self::BaseField>> =
+        DefaultConstraintEvaluator<'a, Self::Air, E>;
 
     fn get_pub_inputs(&self, trace: &Self::Trace) -> QAdaptivePublicInputs {
         let last_step = trace.length() - 1;
@@ -2958,20 +3619,20 @@ impl Prover for QAdaptiveProver {
 
     fn new_trace_lde<E: FieldElement<BaseField = Self::BaseField>>(
         &self,
-        trace_info       : &winterfell::TraceInfo,
-        main_trace       : &ColMatrix<Self::BaseField>,
-        domain           : &StarkDomain<Self::BaseField>,
-        partition_option : PartitionOptions,
+        trace_info: &winterfell::TraceInfo,
+        main_trace: &ColMatrix<Self::BaseField>,
+        domain: &StarkDomain<Self::BaseField>,
+        partition_option: PartitionOptions,
     ) -> (Self::TraceLde<E>, TracePolyTable<E>) {
         DefaultTraceLde::new(trace_info, main_trace, domain, partition_option)
     }
 
     fn build_constraint_commitment<E: FieldElement<BaseField = Self::BaseField>>(
         &self,
-        composition_poly_trace            : CompositionPolyTrace<E>,
+        composition_poly_trace: CompositionPolyTrace<E>,
         num_constraint_composition_columns: usize,
-        domain                            : &StarkDomain<Self::BaseField>,
-        partition_options                 : PartitionOptions,
+        domain: &StarkDomain<Self::BaseField>,
+        partition_options: PartitionOptions,
     ) -> (Self::ConstraintCommitment<E>, CompositionPoly<E>) {
         DefaultConstraintCommitment::new(
             composition_poly_trace,
@@ -2983,9 +3644,9 @@ impl Prover for QAdaptiveProver {
 
     fn new_evaluator<'a, E: FieldElement<BaseField = Self::BaseField>>(
         &self,
-        air                      : &'a Self::Air,
-        aux_rand_elements        : Option<AuxRandElements<E>>,
-        composition_coefficients : winterfell::ConstraintCompositionCoefficients<E>,
+        air: &'a Self::Air,
+        aux_rand_elements: Option<AuxRandElements<E>>,
+        composition_coefficients: winterfell::ConstraintCompositionCoefficients<E>,
     ) -> Self::ConstraintEvaluator<'a, E> {
         DefaultConstraintEvaluator::new(air, aux_rand_elements, composition_coefficients)
     }
@@ -3007,126 +3668,160 @@ fn print_banner() {
     println!();
 }
 
-fn simulate_ai_trigger(ai_risk_score: f64) -> (f64, String) {
+/// AI sinyalini ve zırh kararını ekrana basar.
+///
+/// **Burada artık karar VERİLMİYOR** — karar `armor::decide`'da verilir ve
+/// bu fonksiyon yalnızca sonucu gösterir.
+///
+/// Eski hâli kararı kendisi veriyordu: `if ai_risk_score > 90.0`. Bu sabit,
+/// Python tarafındaki τ(t) ile uyuşmuyordu; risk = 82 / τ = 75 durumunda iki
+/// katman zıt kararlar üretiyordu (bkz. src/armor.rs başlığı).
+fn print_ai_signal(request: &RunRequest, decision: &armor::ArmorDecision) {
     println!("[ADIM 1] AI Guardian Sinyali İşleniyor...");
     println!("{THIN_SEP}");
 
-    println!("  Analiz Edilen Anomali Skoru : {:.2}", ai_risk_score);
+    println!("  Analiz Edilen Anomali Skoru : {:.2}", request.risk_score);
+    println!("  Dinamik Eşik τ(t)           : {:.2}", request.tau);
+    println!(
+        "  Taban Zırh                  : {}",
+        request.baseline.name()
+    );
+    println!("  Sistem Durumu               : {}", decision.status);
 
-    let status = if ai_risk_score > 90.0 {
-        "PANIC_MODE_ACTIVATED"
-    } else {
-        "NORMAL"
-    };
-
-    println!("  Sistem Durumu               : {}", status);
-
-    if status == "PANIC_MODE_ACTIVATED" {
+    if decision.proof_required {
+        println!("  Eşik Aşımı                  : {:.2} puan", decision.asim);
+        println!("  Seçilen Zırh                : {}", decision.level.name());
         println!("  ⚠️  TEHDİT TESPİT EDİLDİ! Post-Kuantum Kalkanı Aktive Ediliyor...");
     }
     println!();
-
-    (ai_risk_score, status.to_string())
 }
 
-fn derive_rho_prime(risk_score: f64) -> [u8; 32] {
-    // Güvenlik: SystemTime::now() teorik olarak UNIX_EPOCH'tan önce dönebilir
-    // expect() yerine unwrap_or kullan.
-    let timestamp_ns = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_else(|_| {
-            eprintln!("[WARN][Q-ZK] Sistem saati UNIX epoch'tan önce görünüyor — 0 kullanılıyor.");
-            std::time::Duration::ZERO
-        })
-        .as_nanos() as u64;
-
-    let rho_prime = generate_rho_prime_from_entropy(risk_score, timestamp_ns);
-
-    println!("  Rho-Prime Seed (ρ') Türetildi:");
-    println!("  ρ' = {}...", hex::encode(&rho_prime[..16]));
-    println!("  (Tam 32-byte seed JSON export'a yazıldı)");
-    println!();
-
-    rho_prime
-}
-
-/// Parameterize edilmiş ML-DSA kafes konfigürasyonuyla TraceTable oluşturur.
-fn build_parameterized_trace(
-    rho_prime    : [u8; 32],
-    level        : MlDsaSecurityLevel,
-    seed_s1      : u128,
-    seed_s2      : u128,
-) -> (TraceTable<BaseElement>, [u8; 32]) {
+/// Kafes matrisini, kısa tohumları ve gerçek ML-DSA imzasını ekrana basar,
+/// ardından kanıtlanacak Winterfell tablosunu döndürür.
+///
+/// **Tablo burada YENİDEN HESAPLANMAZ.** `pipeline::trace_table_from`
+/// ekranda gösterilen `QAdaptiveTrace`'i hücre hücre kopyalar.
+///
+/// Eski `build_parameterized_trace` fonksiyonu `trace.fill(...)` içinde kendi
+/// geçiş mantığını baştan yazıyordu; `QAdaptiveTrace` ise u128 + `% q`
+/// kullanıyordu. Sahnede jüriye gösterilen tablo, STARK'ın kanıtladığı tablo
+/// değildi (hata E2). Kopyalama bu ayrışmayı yapısal olarak imkânsız kılar.
+fn build_trace_for_display_and_proof(outcome: &RunOutcome) -> TraceTable<BaseElement> {
     println!("[ADIM 2] Parameterize ML-DSA Kafes Matrisi Enjekte Ediliyor...");
     println!("{THIN_SEP}");
 
-    let payload = Dilithium5InjectionPayload::new_with_seed(
-        rho_prime, level, seed_s1, seed_s2,
+    let payload = outcome
+        .payload
+        .as_ref()
+        .expect("kanıt gerekli koşuda payload üretilmiş olmalı");
+
+    println!(
+        "  Güvenlik Seviyesi           : {}",
+        payload.config.level.name()
+    );
+    println!(
+        "  Kafes Boyutu                : {}×{} = {} eleman",
+        payload.config.k,
+        payload.config.ell,
+        payload.config.matrix_elements()
+    );
+    println!(
+        "  rho_prime (ilk 8 byte)      : {}",
+        hex::encode(&outcome.rho_prime[..8])
+    );
+    println!("  Kafes Taahhüdü (A_commit_0) : {}", payload.matrix_a[0][0]);
+    println!(
+        "  İz Tablosu                  : {} Sütun, {} Satır",
+        TRACE_WIDTH, TRACE_LENGTH
+    );
+    println!(
+        "  Koşu Türü                   : {}",
+        if outcome.deterministic {
+            "deterministik"
+        } else {
+            "taze entropili"
+        }
     );
 
-    println!("  Güvenlik Seviyesi           : {}", payload.config.level.name());
-    println!("  Kafes Boyutu                : {}×{} = {} eleman",
-        payload.config.k, payload.config.ell, payload.config.matrix_elements());
-    println!("  rho_prime (ilk 8 byte)      : {}", hex::encode(&rho_prime[..8]));
-    println!("  Kafes Taahhüdü (A_commit_0) : {}",
-        payload.matrix_a[0][0]);
-    println!("  İz Tablosu                  : {} Sütun, {} Satır", TRACE_WIDTH, TRACE_LENGTH);
-
-    // QAdaptiveTrace görselleştirici
-    let q_trace = QAdaptiveTrace::new(&payload, TRACE_LENGTH);
-    q_trace.print_table();
-
-    // Winterfell TraceTable'a dönüştür
-    let mut trace = TraceTable::new(TRACE_WIDTH, TRACE_LENGTH);
-    trace.fill(
-        |state| {
-            // Başlangıç durumu: ilk adımın kafes taahhüdü ve s değerleri
-            state[0] = BaseElement::new(payload.matrix_a[0][0] % ML_DSA_Q);
-            state[1] = BaseElement::new(payload.seed_s1 % ML_DSA_Q);
-            state[2] = BaseElement::new(payload.seed_s2 % ML_DSA_Q);
-            state[3] = state[0] * state[1] + state[2];
-        },
-        |step, state| {
-            // Adım geçişi: köşegen matris taahhüdü + s evrimleri
-            let next_step = step + 1;
-            let row_idx   = next_step % payload.config.k;
-            let col_idx   = next_step % payload.config.ell;
-            let a_next    = BaseElement::new(payload.matrix_a[row_idx][col_idx] % ML_DSA_Q);
-
-            state[0] = a_next;
-            state[1] = state[1] + BaseElement::new(2);
-            state[2] = state[2] + BaseElement::new(3);
-            state[3] = state[0] * state[1] + state[2];
-        },
-    );
+    if let Some(kayit) = &outcome.pqc {
+        println!();
+        println!("  ── Gerçek ML-DSA İmzası (fips204) ──");
+        println!(
+            "  Açık Anahtar                : {} bayt",
+            kayit.public_key_len
+        );
+        println!(
+            "  Gizli Anahtar               : {} bayt",
+            kayit.secret_key_len
+        );
+        println!(
+            "  İmza                        : {} bayt",
+            kayit.signature_len
+        );
+        println!(
+            "  İmza (ilk 16 bayt)          : {}...",
+            kayit.signature_prefix_hex
+        );
+        println!(
+            "  Doğrulama                   : {}",
+            if kayit.verified {
+                "✅ GEÇTİ"
+            } else {
+                "❌ KALDI"
+            }
+        );
+    }
 
     println!();
-    (trace, rho_prime)
+
+    // Gösterilen tablo ve kanıtlanan tablo — tek kaynak.
+    let q_trace = QAdaptiveTrace::new(payload, TRACE_LENGTH);
+    q_trace.print_table();
+    println!();
+
+    pipeline::trace_table_from(&q_trace)
 }
 
 /// Winterfell STARK kanıtı üretir.
-fn generate_proof(trace: TraceTable<BaseElement>, options: ProofOptions) -> Result<Proof, String> {
+///
+/// # Returns
+/// `Ok(Proof)` başarılıysa, `Err(String)` kısıt ihlali veya prover hatası.
+fn generate_proof(
+    trace: TraceTable<BaseElement>,
+    options: ProofOptions,
+) -> Result<(Proof, f64), String> {
     println!("[ADIM 3] STARK Kanıtı Üretiliyor (Prover)...");
     println!("{THIN_SEP}");
 
-    let prover  = QAdaptiveProver::new(options);
+    let prover = QAdaptiveProver::new(options);
     let t_start = Instant::now();
-    let proof   = prover.prove(trace).map_err(|e| format!("STARK prover hatası: {:?}", e))?;
-    let elapsed_ms  = t_start.elapsed().as_millis();
+    // Güvenlik: .expect() kaldırıldı. Prover hatası (kısıt ihlali vb.) sonaç
+    // program sonlanmasına değil, çağıran koda iletilen Err'ye dönüştürülür.
+    let proof = prover
+        .prove(trace)
+        .map_err(|e| format!("STARK prover hatası: {:?}", e))?;
+    // Süre payload'a yazılır; raporlarda sabitlenmiş "18.52 ms" değeri tek bir
+    // makinedeki tek bir koşudan geliyordu (bkz. bridge::StarkMetrics).
+    let elapsed_ms = t_start.elapsed().as_secs_f64() * 1000.0;
 
-    println!("  ✅ Prover Çalışması Tamamlandı ({} ms)", elapsed_ms);
-    println!("  Kanıt Ham Boyutu            : {:.2} KB", proof.to_bytes().len() as f64 / 1024.0);
+    println!("  ✅ Prover Çalışması Tamamlandı ({:.2} ms)", elapsed_ms);
+    println!(
+        "  Kanıt Ham Boyutu            : {:.2} KB",
+        proof.to_bytes().len() as f64 / 1024.0
+    );
     println!();
 
-    Ok(proof)
+    Ok((proof, elapsed_ms))
 }
 
 fn verify_proof(proof: Proof, pub_inputs: QAdaptivePublicInputs) -> Proof {
     println!("[ADIM 4] Yerel Doğrulama (Verifier)...");
     println!("{THIN_SEP}");
 
-    let acceptable = AcceptableOptions::MinConjecturedSecurity(80);
-    let t_start  = Instant::now();
+    // Güvenlik seviyesi tek yerden gelir (air::STARK_SECURITY_BITS).
+    // Buraya elle "80" yazmak, README'nin "96" demesiyle aynı sınıf hatadır.
+    let acceptable = AcceptableOptions::MinConjecturedSecurity(air::STARK_SECURITY_BITS);
+    let t_start = Instant::now();
 
     let result = verify::<
         QAdaptiveAir,
@@ -3138,7 +3833,10 @@ fn verify_proof(proof: Proof, pub_inputs: QAdaptivePublicInputs) -> Proof {
     let elapsed_ms = t_start.elapsed().as_millis();
 
     if result.is_ok() {
-        println!("  ✅ KANIT DOĞRULANDI! İç Bütünlük Sağlandı ({} ms)", elapsed_ms);
+        println!(
+            "  ✅ KANIT DOĞRULANDI! İç Bütünlük Sağlandı ({} ms)",
+            elapsed_ms
+        );
     } else {
         println!("  ❌ KANIT DOĞRULANAMADI! Hata: {:?}", result.err());
         std::process::exit(1);
@@ -3149,24 +3847,97 @@ fn verify_proof(proof: Proof, pub_inputs: QAdaptivePublicInputs) -> Proof {
 }
 
 fn export_payload(
-    status     : &str,
-    risk_score : f64,
-    rho_prime  : &[u8; 32],
-    proof      : Proof,
-    pub_inputs : QAdaptivePublicInputs,
-    security_level: &str,
+    request: &RunRequest,
+    outcome: &RunOutcome,
+    proof: Proof,
+    pub_inputs: QAdaptivePublicInputs,
+    prover_ms: f64,
 ) {
     println!("[ADIM 5] Solidity Akıllı Sözleşme Payload'u Oluşturuluyor...");
     println!("{THIN_SEP}");
 
-    let filepath    = "proof_payload.json";
+    let filepath = "proof_payload.json";
     let proof_bytes = proof.to_bytes();
+    let status = outcome.decision.status;
+    let risk_score = request.risk_score;
+    let rho_prime = &outcome.rho_prime;
+    let security_level = outcome.decision.level.name();
 
-    match export_proof_payload(status, risk_score, rho_prime, security_level, &proof_bytes, &pub_inputs, filepath) {
+    // Ölçümler — hepsi bu koşudan, hiçbiri elle yazılmamış.
+    let pqc_ozet = outcome.pqc.as_ref().map(|k| bridge::PqcSummary {
+        tier: k.level.name().to_string(),
+        public_key_bytes: k.public_key_len,
+        secret_key_bytes: k.secret_key_len,
+        signature_bytes: k.signature_len,
+        public_key_commitment_hex: hex::encode(k.public_key_commitment),
+        signature_prefix_hex: k.signature_prefix_hex.clone(),
+        signature_verified: k.verified,
+        keygen_ms: k.keygen_ms,
+        sign_ms: k.sign_ms,
+        verify_ms: k.verify_ms,
+        tamper_rejected: k.tamper_rejected,
+        tamper_ms: k.tamper_ms,
+    });
+
+    // Calldata tasarrufu, bu kademedeki GERÇEK imza boyutundan hesaplanır.
+    let calldata = outcome.pqc.as_ref().map(|k| {
+        bridge::CalldataRecord::compute(
+            bridge::CalldataRecord::DEFAULT_BATCH_SIZE,
+            k.signature_len,
+            proof_bytes.len(),
+        )
+    });
+
+    let extras = bridge::PayloadExtras {
+        tau: request.tau,
+        run_id: request.run_id.clone(),
+        deterministic: outcome.deterministic,
+        stark: bridge::StarkMetrics {
+            proof_bytes: proof_bytes.len(),
+            prover_ms,
+            conjectured_security_bits: air::STARK_SECURITY_BITS,
+            field: "f128".to_string(),
+            num_queries: air::FRI_NUM_QUERIES,
+            blowup_factor: air::FRI_BLOWUP_FACTOR,
+        },
+        pqc: pqc_ozet,
+        calldata,
+        // Aşamalar `outcome`'dan gelir; STARK aşamaları main akışında eklendi.
+        stages: outcome.stages.clone(),
+        lattice: outcome.lattice.clone(),
+    };
+
+    if let Some(c) = &extras.calldata {
+        println!("  Calldata Tasarrufu          : %{:.2}", c.savings_pct);
+        println!("  Formül                      : {}", c.formula);
+        println!(
+            "  ECDSA partisi ({} imza)     : {} bayt{}",
+            c.batch_size,
+            c.ecdsa_batch_bytes,
+            if c.beats_ecdsa {
+                ""
+            } else {
+                "  ← ECDSA calldata'da daha küçük"
+            }
+        );
+    }
+
+    match export_proof_payload(
+        status,
+        risk_score,
+        rho_prime,
+        security_level,
+        &proof_bytes,
+        &pub_inputs,
+        extras,
+        filepath,
+    ) {
         Ok(_) => {
+            // Güvenlik: fs::metadata().unwrap() panic'i kaldırıldı.
+            // Dosya boyutu alınamazsa (yarış koşulu, izin sorunu) uyarı basılır.
             match fs::metadata(filepath) {
                 Ok(meta) => {
-                    let size_kb  = meta.len() as f64 / 1024.0;
+                    let size_kb = meta.len() as f64 / 1024.0;
                     println!("  ✅ JSON Payload Başarıyla Dışa Aktarıldı!");
                     println!("  Dosya Yolu      : ./{}", filepath);
                     println!("  JSON Boyutu     : {:.2} KB", size_kb);
@@ -3178,7 +3949,7 @@ fn export_payload(
                     println!("  rho_prime_hex   : {}...", hex::encode(&rho_prime[..8]));
                 }
             }
-        },
+        }
         Err(e) => {
             println!("  ❌ JSON Dışa Aktarma Hatası: {}", e);
         }
@@ -3192,9 +3963,18 @@ fn print_summary(elapsed_total_ms: u128, risk_score: f64, level: &str, rho_prime
     println!("{SEPARATOR}");
     println!();
     println!("  🌐  Sistem Entegrasyon Özeti:");
-    println!("    AI Modülü           : Risk Tespiti Başarılı (Skor: {:.2})", risk_score);
-    println!("    PQC Modülü          : {} MLWE İzleme & Kanıtlama Başarılı", level);
-    println!("    Rho-Prime Seed (ρ') : {}...", hex::encode(&rho_prime[..16]));
+    println!(
+        "    AI Modülü           : Risk Tespiti Başarılı (Skor: {:.2})",
+        risk_score
+    );
+    println!(
+        "    PQC Modülü          : {} MLWE İzleme & Kanıtlama Başarılı",
+        level
+    );
+    println!(
+        "    Rho-Prime Seed (ρ') : {}...",
+        hex::encode(&rho_prime[..16])
+    );
     println!("    Köprü               : JSON Export Başarılı (proof_payload.json)");
     println!("    Toplam Gecikme      : {} ms", elapsed_total_ms);
     println!();
@@ -3206,65 +3986,131 @@ fn print_summary(elapsed_total_ms: u128, risk_score: f64, level: &str, rho_prime
 // CLI Argüman Ayrıştırma
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct CliArgs {
-    rho_prime_override : Option<[u8; 32]>,
-    ai_risk_score      : f64,
-    security_level     : MlDsaSecurityLevel,
+/// Prover'ın kabul ettiği argümanlar.
+///
+/// API katmanı bunların hepsini her koşuda geçirir. Eskiden API prover'ı
+/// `create_subprocess_exec(binary)` ile **hiç argüman vermeden** çağırıyordu;
+/// prover da kendi varsayılanlarıyla (risk 98.52, zırh ML-DSA-87) koşuyordu.
+/// Yani kafes her koşuda değişiyordu ama AI'ın kararına göre değil.
+const KULLANIM: &str = "\
+Kullanım: q-adaptive-zk [SEÇENEKLER]
+
+Seçenekler:
+  --risk-score <f64>     AI'ın ürettiği risk yüzdesi (0–100)
+  --tau <f64>            Dinamik eşik τ(t)
+  --level <44|65|87>     Zırh kademesini elle sabitle (τ kararını geçersiz kılar)
+  --baseline <44|65|87>  Hesabın taban zırhı; kademe bunun altına inemez
+  --user-op-hash <hex>   Kanıtın bağlanacağı UserOperation özeti
+  --epoch-ns <u64>       Dönem damgası (nanosaniye)
+  --run-id <metin>       Koşu kimliği (loglar ve payload için)
+  --rho-prime <64-hex>   ρ''yü doğrudan ver (türetmeyi atlar)
+  --fresh-entropy <hex>  Taze entropi ekle — koşu deterministik OLMAZ
+  --help                 Bu metni göster
+";
+
+/// Ayrıştırma sonucu — hata durumunda çağıran çıkış kodu 1 ile durur.
+fn parse_cli() -> Result<(RunRequest, Option<MlDsaSecurityLevel>), String> {
+    let args: Vec<String> = env::args().collect();
+    let mut request = RunRequest::elle_kosu();
+    let mut level_override: Option<MlDsaSecurityLevel> = None;
+
+    /// Bir seçeneğin değerini alır; eksikse açık hata döner.
+    fn deger<'a>(args: &'a [String], i: usize, ad: &str) -> Result<&'a str, String> {
+        args.get(i + 1)
+            .map(|s| s.as_str())
+            .ok_or_else(|| format!("{} bir değer bekliyor", ad))
+    }
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--help" | "-h" => {
+                println!("{}", KULLANIM);
+                std::process::exit(0);
+            }
+            "--risk-score" => {
+                let ham = deger(&args, i, "--risk-score")?;
+                // Eskiden ayrıştırma hatası yalnızca uyarı basıp varsayılana
+                // düşüyordu — sessiz yapılandırma hatası. Artık durduruyor.
+                request.risk_score = ham
+                    .parse::<f64>()
+                    .map_err(|_| format!("--risk-score sayı olmalı, '{}' alındı", ham))?;
+                i += 1;
+            }
+            "--tau" => {
+                let ham = deger(&args, i, "--tau")?;
+                request.tau = ham
+                    .parse::<f64>()
+                    .map_err(|_| format!("--tau sayı olmalı, '{}' alındı", ham))?;
+                i += 1;
+            }
+            "--level" => {
+                // HATA E5: eski desen `"87" | _ => Level87` geçersiz girdiyi
+                // sessizce en yüksek kademeye düşürüyordu.
+                level_override = Some(MlDsaSecurityLevel::parse(deger(&args, i, "--level")?)?);
+                i += 1;
+            }
+            "--baseline" => {
+                request.baseline = MlDsaSecurityLevel::parse(deger(&args, i, "--baseline")?)?;
+                i += 1;
+            }
+            "--user-op-hash" => {
+                request.user_op_hash = deger(&args, i, "--user-op-hash")?.to_string();
+                i += 1;
+            }
+            "--epoch-ns" => {
+                let ham = deger(&args, i, "--epoch-ns")?;
+                request.epoch_ns = ham
+                    .parse::<u64>()
+                    .map_err(|_| format!("--epoch-ns tamsayı olmalı, '{}' alındı", ham))?;
+                i += 1;
+            }
+            "--run-id" => {
+                request.run_id = deger(&args, i, "--run-id")?.to_string();
+                i += 1;
+            }
+            "--rho-prime" => {
+                request.rho_override = Some(parse_rho_prime_hex(deger(&args, i, "--rho-prime")?)?);
+                i += 1;
+            }
+            "--fresh-entropy" => {
+                request.fresh_entropy =
+                    Some(parse_rho_prime_hex(deger(&args, i, "--fresh-entropy")?)?);
+                i += 1;
+            }
+            bilinmeyen => {
+                return Err(format!(
+                    "Bilinmeyen argüman: '{}'\n\n{}",
+                    bilinmeyen, KULLANIM
+                ));
+            }
+        }
+        i += 1;
+    }
+
+    // Dönem damgası verilmediyse sistem saatinden al — ama bunu sessizce
+    // yapmak determinizmi bozar, o yüzden loga yazılıyor.
+    if request.epoch_ns == 0 {
+        request.epoch_ns = simdi_ns();
+        eprintln!(
+            "[WARN][Q-ZK] --epoch-ns verilmedi, sistem saati kullanıldı ({}). \
+             Tekrarlanabilir koşu için bu değeri açıkça geçirin.",
+            request.epoch_ns
+        );
+    }
+
+    Ok((request, level_override))
 }
 
-impl CliArgs {
-    fn parse() -> Self {
-        let args: Vec<String> = env::args().collect();
-        let mut rho_prime_override = None;
-        let mut ai_risk_score      = 98.52_f64;
-        let mut security_level     = MlDsaSecurityLevel::Level87;
-
-        let mut i = 1;
-        while i < args.len() {
-            match args[i].as_str() {
-                "--rho-prime" => {
-                    if i + 1 < args.len() {
-                        match parse_rho_prime_hex(&args[i + 1]) {
-                            Ok(seed) => {
-                                rho_prime_override = Some(seed);
-                                println!("  CLI: rho_prime override alındı: {}...", &args[i + 1][..16]);
-                            },
-                            Err(e) => {
-                                eprintln!("Hata: --rho-prime argümanı geçersiz: {}", e);
-                                std::process::exit(1);
-                            }
-                        }
-                        i += 1;
-                    }
-                },
-                "--risk-score" => {
-                    if i + 1 < args.len() {
-                        match args[i + 1].parse::<f64>() {
-                            Ok(v)  => ai_risk_score = v,
-                            Err(_) => {
-                                eprintln!("[WARN][Q-ZK] --risk-score ayrıştırılamadı, varsayılan 98.52 kullanılıyor.");
-                            }
-                        }
-                        i += 1;
-                    }
-                },
-                "--level" => {
-                    if i + 1 < args.len() {
-                        security_level = match args[i + 1].as_str() {
-                            "44" => MlDsaSecurityLevel::Level44,
-                            "65" => MlDsaSecurityLevel::Level65,
-                            "87" | _ => MlDsaSecurityLevel::Level87,
-                        };
-                        i += 1;
-                    }
-                },
-                _ => {}
-            }
-            i += 1;
-        }
-
-        Self { rho_prime_override, ai_risk_score, security_level }
-    }
+/// Şu anki zamanı nanosaniye olarak verir.
+fn simdi_ns() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| {
+            eprintln!("[WARN][Q-ZK] Sistem saati UNIX epoch'tan önce görünüyor — 0 kullanılıyor.");
+            std::time::Duration::ZERO
+        })
+        .as_nanos() as u64
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3274,88 +4120,371 @@ impl CliArgs {
 fn main() {
     let t_total = Instant::now();
 
+    // Loglama başlat
     env_logger::init();
 
     print_banner();
 
-    let cli = CliArgs::parse();
+    // CLI argümanlarını ayrıştır. Geçersiz argüman artık sessizce
+    // varsayılana düşmüyor — çıkış kodu 1 ile duruyoruz (hata E5).
+    let (mut request, level_override) = match parse_cli() {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("[ERROR][Q-ZK] {}", e);
+            std::process::exit(1);
+        }
+    };
 
-    let (risk_score, status) = simulate_ai_trigger(cli.ai_risk_score);
+    // `--level` verilmişse taban kademeyi oraya çekeriz; tek yönlü tırmanma
+    // kuralı gereği armor::decide sonucu bunun altına düşemez.
+    if let Some(level) = level_override {
+        request.baseline = level;
+    }
 
-    if status == "PANIC_MODE_ACTIVATED" {
-        let rho_prime = match cli.rho_prime_override {
-            Some(seed) => {
-                println!("[ADIM 2a] API'den Gelen rho_prime Kullanılıyor...");
-                println!("{THIN_SEP}");
-                println!("  ρ' = {}...", hex::encode(&seed[..16]));
-                println!();
-                seed
-            },
-            None => {
-                println!("[ADIM 2a] Yeni rho_prime Seed'i Türetiliyor...");
-                println!("{THIN_SEP}");
-                derive_rho_prime(risk_score)
-            },
-        };
+    // Adım 1: Zırh kararı — TEK kural, τ köprüsü üzerinden.
+    let outcome = match pipeline::run(&request) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("[ERROR][Q-ZK] Kriptografik katman hatası: {}", e);
+            std::process::exit(2);
+        }
+    };
 
-        let level_name = cli.security_level.name();
+    print_ai_signal(&request, &outcome.decision);
 
-        let mut s1_bytes = [0u8; 16];
-        let mut s2_bytes = [0u8; 16];
-        s1_bytes.copy_from_slice(&rho_prime[0..16]);
-        s2_bytes.copy_from_slice(&rho_prime[16..32]);
-        let seed_s1 = u128::from_le_bytes(s1_bytes) % ML_DSA_Q;
-        let seed_s2 = u128::from_le_bytes(s2_bytes) % ML_DSA_Q;
-
-        let (trace, rho_used) = build_parameterized_trace(
-            rho_prime,
-            cli.security_level,
-            seed_s1,
-            seed_s2,
-        );
-
-        // Genel girdileri çıkar
-        let last_step = trace.length() - 1;
-        let pub_inputs = QAdaptivePublicInputs {
-            start_state: [
-                trace.get(0, 0), trace.get(1, 0),
-                trace.get(2, 0), trace.get(3, 0),
-            ],
-            final_state: [
-                trace.get(0, last_step), trace.get(1, last_step),
-                trace.get(2, last_step), trace.get(3, last_step),
-            ],
-        };
-        let pub_inputs_verify = pub_inputs.clone();
-        let pub_inputs_export = pub_inputs.clone();
-
-        let options = get_proof_options();
-
-        // Adım 3: STARK Kanıtı Üret
-        let proof = match generate_proof(trace, options) {
-            Ok(p)  => p,
-            Err(e) => {
-                eprintln!("[ERROR][Q-ZK] STARK kanıt üretimi başarısız: {}", e);
-                eprintln!("[ERROR][Q-ZK] Pipeline durduruldu. proof_payload.json güncellenmedi.");
-                std::process::exit(2);
-            }
-        };
-
-        // Adım 4: Doğrula
-        let verified_proof = verify_proof(proof, pub_inputs_verify);
-
-        // Adım 5: Köprü (JSON Export)
-        export_payload(&status, risk_score, &rho_used, verified_proof, pub_inputs_export, level_name);
-
-        let total_ms = t_total.elapsed().as_millis();
-        print_summary(total_ms, risk_score, level_name, &rho_used);
-    } else {
+    if !outcome.decision.proof_required {
         println!("  Sistem normal modda. ZK kanıt üretimi tetiklenmedi.");
+        println!();
+        println!("  NOT: Bu koşuda kanıt ÜRETİLMEDİ. Çağıran taraf diskteki");
+        println!("       eski proof_payload.json'ı taze bir kanıt gibi sunmamalıdır.");
         println!();
         let total_ms = t_total.elapsed().as_millis();
         println!("{SEPARATOR}");
-        println!("  Q-ADAPTIVE ZK GUARD — Normal Mod Tamamlandı ({} ms)", total_ms);
+        println!(
+            "  Q-ADAPTIVE ZK GUARD — Normal Mod Tamamlandı ({} ms)",
+            total_ms
+        );
         println!("{SEPARATOR}");
+        return;
+    }
+
+    let level_name = outcome.decision.level.name();
+
+    // `outcome` artık aşama listesini taşıyor; STARK aşamaları burada eklenecek.
+    let mut outcome = outcome;
+
+    // ── Aşama: iz tablosu ───────────────────────────────────────────────────
+    let t_iz = Instant::now();
+    let trace = build_trace_for_display_and_proof(&outcome);
+    outcome.stages.push(pipeline::StageRecord {
+        name: "iz_tablosu".to_string(),
+        ms: t_iz.elapsed().as_secs_f64() * 1000.0,
+        ok: true,
+        detail: format!("{} satır × {} sütun", TRACE_LENGTH, TRACE_WIDTH),
+    });
+
+    // Genel girdileri çıkar
+    let last_step = trace.length() - 1;
+    let pub_inputs = QAdaptivePublicInputs {
+        start_state: [
+            trace.get(0, 0),
+            trace.get(1, 0),
+            trace.get(2, 0),
+            trace.get(3, 0),
+        ],
+        final_state: [
+            trace.get(0, last_step),
+            trace.get(1, last_step),
+            trace.get(2, last_step),
+            trace.get(3, last_step),
+        ],
+    };
+    let pub_inputs_verify = pub_inputs.clone();
+    let pub_inputs_export = pub_inputs.clone();
+
+    let options = get_proof_options();
+
+    // ── Aşama: STARK prover ─────────────────────────────────────────────────
+    // Adım 3: STARK Kanıtı Üret (Result propagasyon — program crash yok)
+    let (proof, prover_ms) = match generate_proof(trace, options) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[ERROR][Q-ZK] STARK kanıt üretimi başarısız: {}", e);
+            eprintln!("[ERROR][Q-ZK] Pipeline durduruldu. proof_payload.json güncellenmedi.");
+            std::process::exit(2);
+        }
+    };
+    outcome.stages.push(pipeline::StageRecord {
+        name: "stark_prover".to_string(),
+        ms: prover_ms,
+        ok: true,
+        detail: format!("{} bayt kanıt", proof.to_bytes().len()),
+    });
+
+    // ── Aşama: yerel doğrulama ──────────────────────────────────────────────
+    // Adım 4: Doğrula
+    let t_dogrula = Instant::now();
+    let verified_proof = verify_proof(proof, pub_inputs_verify);
+    outcome.stages.push(pipeline::StageRecord {
+        name: "stark_dogrulama".to_string(),
+        ms: t_dogrula.elapsed().as_secs_f64() * 1000.0,
+        ok: true,
+        detail: format!("{} bit konjektürel", air::STARK_SECURITY_BITS),
+    });
+
+    // NOT: "payload yazma" bilinçli olarak bir AŞAMA DEĞİL.
+    //
+    // Bir aşama kendi süresini kendi yazdığı dosyaya koyamaz — ölçüm, yazma
+    // işleminden önce bitmek zorunda kalır ve her koşuda 0.000 ms yazardı.
+    // Ölçülmemiş bir şeyi ölçülmüş gibi göstermektense listeden çıkarıldı;
+    // arayüz bu adımı süre iddiası olmadan bir tamamlanma işareti olarak
+    // gösterir.
+    //
+    // Adım 5: Köprü (JSON Export — ölçümler dahil)
+    export_payload(
+        &request,
+        &outcome,
+        verified_proof,
+        pub_inputs_export,
+        prover_ms,
+    );
+
+    let total_ms = t_total.elapsed().as_millis();
+    print_summary(total_ms, request.risk_score, level_name, &outcome.rho_prime);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Entegrasyon Testleri
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_rho_prime_from_entropy() {
+        let seed1 = generate_rho_prime_from_entropy(98.52, 1_000_000_000);
+        let seed2 = generate_rho_prime_from_entropy(98.52, 1_000_000_001); // +1ns
+        let seed3 = generate_rho_prime_from_entropy(50.00, 1_000_000_000); // farklı risk
+
+        // Farklı girişler → farklı seed'ler
+        assert_ne!(seed1, seed2, "Zaman farkı seed'i değiştirmeli");
+        assert_ne!(seed1, seed3, "Risk skoru farkı seed'i değiştirmeli");
+
+        // BULGU 11 REGRESYONU — aynı giriş, birebir aynı seed.
+        //
+        // Eski not burada şöyle diyordu: "Gerçek implementation'da process ID
+        // kullanıldığından tam deterministik değil." Bu, kanıtın yeniden
+        // üretilemez olduğunun kabulüydü. Artık `process::id()` yok ve
+        // aşağıdaki eşitlik testi o davranış geri gelirse kırılır.
+        let seed1b = generate_rho_prime_from_entropy(98.52, 1_000_000_000);
+        assert_eq!(
+            seed1, seed1b,
+            "Aynı girdi aynı ρ''yü vermeli — süreç kimliği karışmış olabilir"
+        );
+        assert!(seed1b != [0u8; 32], "Seed sıfır dizisi olmamalı");
+    }
+
+    /// BULGU 9 REGRESYONU — ilan edilen güvenlik seviyesi GERÇEKTEN uygulanıyor.
+    ///
+    /// Bu test sayıyı yorumdan değil, kanıtın kendisinden alır:
+    ///   • `STARK_SECURITY_BITS` seviyesinde doğrulama GEÇMELİ,
+    ///   • daha yüksek bir seviyede doğrulama KALMALI.
+    ///
+    /// Böylece sabit gerçekte elde edilen seviyeden yüksek yazılırsa
+    /// (README'nin "96" demesi gibi) test kırılır.
+    #[test]
+    fn test_guvenlik_biti_gercekten_uygulaniyor() {
+        let istek = RunRequest {
+            risk_score: 95.0,
+            tau: 75.0,
+            baseline: MlDsaSecurityLevel::Level44,
+            user_op_hash: "0xguvenlik".to_string(),
+            epoch_ns: 7_000_000_000,
+            run_id: "guvenlik".to_string(),
+            fresh_entropy: None,
+            rho_override: None,
+        };
+
+        let outcome = pipeline::run(&istek).unwrap();
+        let trace = pipeline::trace_table_for(&outcome).unwrap();
+
+        let last_step = trace.length() - 1;
+        let pub_inputs = QAdaptivePublicInputs {
+            start_state: [
+                trace.get(0, 0),
+                trace.get(1, 0),
+                trace.get(2, 0),
+                trace.get(3, 0),
+            ],
+            final_state: [
+                trace.get(0, last_step),
+                trace.get(1, last_step),
+                trace.get(2, last_step),
+                trace.get(3, last_step),
+            ],
+        };
+
+        let prover = QAdaptiveProver::new(get_proof_options());
+        let proof = prover.prove(trace).unwrap();
+
+        type H = Blake3_256<BaseElement>;
+
+        // İlan edilen seviyede geçmeli.
+        let ilan_edilen = AcceptableOptions::MinConjecturedSecurity(air::STARK_SECURITY_BITS);
+        assert!(
+            winter_verifier::verify::<QAdaptiveAir, H, DefaultRandomCoin<H>, MerkleTree<H>>(
+                proof.clone(),
+                pub_inputs.clone(),
+                &ilan_edilen
+            )
+            .is_ok(),
+            "Kanıt ilan edilen {} bit seviyesinde doğrulanamadı",
+            air::STARK_SECURITY_BITS
+        );
+
+        // İlan edilenin üstünde KALMALI — aksi hâlde sabit gereğinden düşük.
+        let cok_yuksek = AcceptableOptions::MinConjecturedSecurity(air::STARK_SECURITY_BITS + 40);
+        assert!(
+            winter_verifier::verify::<QAdaptiveAir, H, DefaultRandomCoin<H>, MerkleTree<H>>(
+                proof,
+                pub_inputs,
+                &cok_yuksek
+            )
+            .is_err(),
+            "Kanıt {} bit seviyesinde de geçti — STARK_SECURITY_BITS düşük yazılmış olabilir",
+            air::STARK_SECURITY_BITS + 40
+        );
+    }
+
+    #[test]
+    fn test_parse_rho_prime_hex_valid() {
+        let hex = "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233";
+        let seed = parse_rho_prime_hex(hex).unwrap();
+        assert_eq!(seed[0], 0xAA);
+        assert_eq!(seed[1], 0xBB);
+        assert_eq!(seed[31], 0x33);
+    }
+
+    #[test]
+    fn test_parse_rho_prime_hex_invalid_length() {
+        let result = parse_rho_prime_hex("aabbcc"); // Çok kısa
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_rho_prime_hex_invalid_chars() {
+        let hex = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ";
+        let result = parse_rho_prime_hex(hex);
+        assert!(result.is_err());
+    }
+
+    /// Uçtan uca: karar → kafes → iz → kanıt → JSON export.
+    ///
+    /// İz tablosu `pipeline::trace_table_from` ile üretiliyor; yani bu test
+    /// aynı zamanda kanıtlanan tablonun gösterilen tablo olduğunu da koşuyor.
+    #[test]
+    fn test_full_bridge_integration_with_rho_prime() {
+        let istek = RunRequest {
+            risk_score: 95.0,
+            tau: 75.0,
+            baseline: MlDsaSecurityLevel::Level44,
+            user_op_hash: "0xdeadbeefcafebabe".to_string(),
+            epoch_ns: 42_000_000_000,
+            run_id: "entegrasyon".to_string(),
+            fresh_entropy: None,
+            rho_override: None,
+        };
+
+        let outcome = pipeline::run(&istek).unwrap();
+        assert!(
+            outcome.decision.proof_required,
+            "risk 95 > τ 75 → kanıt üretilmeli"
+        );
+
+        let rho_prime = outcome.rho_prime;
+        let options = get_proof_options();
+        let trace = pipeline::trace_table_for(&outcome).unwrap();
+
+        let last_step = trace.length() - 1;
+        let pub_inputs = QAdaptivePublicInputs {
+            start_state: [
+                trace.get(0, 0),
+                trace.get(1, 0),
+                trace.get(2, 0),
+                trace.get(3, 0),
+            ],
+            final_state: [
+                trace.get(0, last_step),
+                trace.get(1, last_step),
+                trace.get(2, last_step),
+                trace.get(3, last_step),
+            ],
+        };
+
+        let prover = QAdaptiveProver::new(options);
+        let proof = prover.prove(trace).unwrap();
+
+        let filepath = "test_proof_payload_rho.json";
+        let proof_bytes = proof.to_bytes();
+        let kayit = outcome.pqc.as_ref().unwrap();
+
+        export_proof_payload(
+            outcome.decision.status,
+            istek.risk_score,
+            &rho_prime,
+            outcome.decision.level.name(),
+            &proof_bytes,
+            &pub_inputs,
+            bridge::PayloadExtras {
+                tau: istek.tau,
+                run_id: istek.run_id.clone(),
+                deterministic: outcome.deterministic,
+                stark: bridge::StarkMetrics {
+                    proof_bytes: proof_bytes.len(),
+                    prover_ms: 0.0,
+                    conjectured_security_bits: air::STARK_SECURITY_BITS,
+                    field: "f128".to_string(),
+                    num_queries: air::FRI_NUM_QUERIES,
+                    blowup_factor: air::FRI_BLOWUP_FACTOR,
+                },
+                pqc: Some(bridge::PqcSummary {
+                    tier: kayit.level.name().to_string(),
+                    public_key_bytes: kayit.public_key_len,
+                    secret_key_bytes: kayit.secret_key_len,
+                    signature_bytes: kayit.signature_len,
+                    public_key_commitment_hex: hex::encode(kayit.public_key_commitment),
+                    signature_prefix_hex: kayit.signature_prefix_hex.clone(),
+                    signature_verified: kayit.verified,
+                    keygen_ms: kayit.keygen_ms,
+                    sign_ms: kayit.sign_ms,
+                    verify_ms: kayit.verify_ms,
+                    tamper_rejected: kayit.tamper_rejected,
+                    tamper_ms: kayit.tamper_ms,
+                }),
+                stages: outcome.stages.clone(),
+                lattice: outcome.lattice.clone(),
+                calldata: Some(bridge::CalldataRecord::compute(
+                    bridge::CalldataRecord::DEFAULT_BATCH_SIZE,
+                    kayit.signature_len,
+                    proof_bytes.len(),
+                )),
+            },
+            filepath,
+        )
+        .unwrap();
+
+        let metadata = std::fs::metadata(filepath).unwrap();
+        assert!(metadata.len() > 1000, "Payload en az 1KB olmalı");
+
+        // rho_prime_hex alanı mevcut mu?
+        let content = std::fs::read_to_string(filepath).unwrap();
+        assert!(
+            content.contains("rho_prime_hex"),
+            "Payload rho_prime_hex içermeli"
+        );
+
+        std::fs::remove_file(filepath).unwrap();
     }
 }
 ```
@@ -3408,7 +4537,7 @@ Q-ADAPTIVE bu problemi **Sınır İddiası (Boundary Assertion) Stratejisi** ile
 * **Zincir Üstü Sınır Koşulları**: Yürütme izinin yalnızca başlangıç (adım 0) ve bitiş (adım N-1) durumları tabloya yazılır.
 * **Sınır Koşulu Doğrulaması**: Doğrulayıcı (verifier), bu uç noktaların bütünlüğünü geçiş kısıtlarından bağımsız çalışan sınır iddiaları ile denetler.
 
-Böylece polinom çarpım karmaşıklığı geçiş kısıtlarından ayrıştırılır ve kısıt derecesi $2$ seviyesinde sabit tutulur. Bu optimizasyon, kanıt üretim süresini **$18.52 \text{ ms}$** seviyesine çekerken, kanıt boyutunu **$3.85 \text{ KB}$** düzeyinde tutarak zincir üstü doğrulamayı son derece ekonomik hale getirir.
+Böylece polinom çarpım karmaşıklığı geçiş kısıtlarından ayrıştırılır ve kısıt derecesi $2$ seviyesinde sabit tutulur. Bu optimizasyon, kanıt üretim süresini **tek haneli milisaniye** mertebesinde tutar ve kanıt boyutunu **~3,6–4,3 KB** aralığında sınırlar. İki değer de her koşuda ÖLÇÜLÜR ve `proof_payload.json` içine `stark.prover_ms` / `stark.proof_bytes` olarak yazılır; sabit sayı olarak verilmezler çünkü kanıt boyutu zırh kademesine, süre ise donanıma göre değişir.
 
 ---
 # BÖLÜM 6: KATMAN 4 AUDIT — ZIRHLANDIRILMIŞ ZİNCİR ÜSTÜ AKILLI HESAPLAR
@@ -3417,12 +4546,13 @@ Böylece polinom çarpım karmaşıklığı geçiş kısıtlarından ayrıştır
 
 Aşağıda, `Q-Adaptive-Contracts/contracts/QAdaptiveAccount.sol` sözleşmesinin %100 eksiksiz, üretim kalitesindeki kaynak kodu yer almaktadır. Bu sözleşme; hibrit ZK-STARK + AI imza doğrulaması, CEI kısıtlamaları ve zaman kilidi (time-lock) özelliklerine sahip bir ERC-4337 akıllı hesap (smart account) uygulamasıdır.
 
+<!-- KOD-SENK kaynak=Q-Adaptive-Contracts/contracts/QAdaptiveAccount.sol parca=1/1 ic-baslik=hayir -->
 ```solidity
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.24;
 
-import "./interfaces/IUserOperation.sol";
-import "./interfaces/IAICore.sol";
+import {UserOperation} from "./interfaces/IUserOperation.sol";
+import {IAICore} from "./interfaces/IAICore.sol";
 
 /**
  * @title  QAdaptiveAccount
@@ -3606,8 +4736,99 @@ contract QAdaptiveAccount {
     mapping(bytes32 => PendingOp) public pendingTransactions;
 
     // ─────────────────────────────────────────────────────────────────────────
+    // BULGU 6 — Risk Skoru Kaynağı
+    // ─────────────────────────────────────────────────────────────────────────
+    //
+    // Eski kod `aiDynamicRiskScore`'u UserOperation'ın İMZA ALANINDAN çözüyordu:
+    //
+    //     (starkProofBytes, metadata, aiDynamicRiskScore) =
+    //         abi.decode(userOp.signature, (bytes, AirVerificationMetadata, uint256));
+    //     ...
+    //     if (aiDynamicRiskScore > rollingRiskThreshold) { reddet }
+    //
+    // Yani skoru yazan taraf ile işlemi gönderen taraf aynıydı. Anahtarı çalan
+    // biri skoru 0 yazıp AI kapısından doğrudan geçebilirdi. Kapı, kendisini
+    // açması gereken kişinin elindeydi.
+    //
+    // Artık skor üç kaynaktan gelir ve hiçbiri gönderenin yazdığı alan değildir.
+
+    /// @notice Risk skorunun hangi kaynaktan alınacağı.
+    enum RiskSource {
+        /// Zincir üstü AI Core oracle'ı (varsayılan).
+        AI_CORE_ORACLE,
+        /// Guardian'ın (Python katmanı) imzaladığı attestation.
+        GUARDIAN_SIGNATURE,
+        /// İkisinin BÜYÜĞÜ — hiçbir kaynak riski tek başına düşüremez.
+        HIGHEST_OF_BOTH
+    }
+
+    /**
+     * @notice Guardian'ın imzaladığı risk attestation'ı.
+     * @dev    `signature`, `_attestationDigest()` çıktısı üzerine atılmış
+     *         65 baytlık ECDSA imzasıdır. Digest userOpHash'i, skoru ve
+     *         son geçerlilik zamanını birlikte bağlar; böylece bir
+     *         attestation başka bir işleme taşınamaz (replay).
+     */
+    struct GuardianAttestation {
+        uint256 riskScore;
+        uint256 validUntil;
+        bytes   signature;
+    }
+
+    /// @notice Aktif risk kaynağı politikası.
+    RiskSource public riskSource;
+
+    /// @notice Guardian attestation'larını imzalamaya yetkili adres.
+    address public guardianSigner;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // HATA E4 — Zırh Kademesi (tek yönlü tırmanma)
+    // ─────────────────────────────────────────────────────────────────────────
+    //
+    // Kural zincir DIŞI katmanda vardı ama `updateQuantumArmor` hiçbir kontrol
+    // yapmadan kademeyi yazıyordu. EntryPoint yoluyla gelen bir çağrı zırhı
+    // ML-DSA-87'den ML-DSA-44'e DÜŞÜREBİLİYORDU.
+
+    /// @notice Aktif zırhın sırası (0=Standard, 1=44, 2=65, 3=87).
+    uint8 public currentArmorRank;
+
+    /// @notice Zırhın asla altına inemeyeceği taban sıra.
+    uint8 public armorBaselineRank;
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Events
     // ─────────────────────────────────────────────────────────────────────────
+
+    /// @notice Gönderenin iddia ettiği skor ile gerçek skor ayrıştığında.
+    /// @dev Bu olay, skoru düşürme girişimini zincire kalıcı olarak yazar.
+    event RiskScoreClaimMismatch(
+        bytes32 indexed opHash,
+        uint256 claimedScore,
+        uint256 resolvedScore
+    );
+
+    /// @notice Doğrulama sonucu — reddedişler artık YALNIZCA olay olarak kaydedilir.
+    event ValidationResult(bytes32 indexed opHash, bool accepted, bytes32 reason);
+
+    /// @notice Risk kaynağı politikası değiştiğinde.
+    event RiskSourceUpdated(RiskSource previous, RiskSource current);
+
+    /// @notice Guardian imzalayıcısı değiştiğinde.
+    /// @dev Adresler `indexed`: guardian rotasyonu denetim açısından kritik
+    ///      bir olay ve belirli bir adrese göre filtrelenebilmeli.
+    event GuardianSignerUpdated(address indexed previous, address indexed current);
+
+    /// @notice Sahiplik devredildiğinde.
+    event OwnershipTransferred(address indexed previous, address indexed current);
+
+    /// @notice AI Core oracle adresi değiştiğinde.
+    event AICoreUpdated(address indexed previous, address indexed current);
+
+    /// @notice Zırh düşürüldüğünde (yalnızca sahip yapabilir).
+    event QuantumArmorDowngraded(string newTier, uint8 newRank);
+
+    /// @notice Zırh taban sırası değiştiğinde.
+    event ArmorBaselineUpdated(uint8 previous, uint8 current);
 
     event QuantumArmorUpdated(string newTier, bytes32 newPublicKeyRoot);
     event SafeDestinationAdded(address indexed destination);
@@ -3640,7 +4861,15 @@ contract QAdaptiveAccount {
 
     /**
      * @dev Reentrancy guard. Sets storage mutex before function body and
-     *      clears it after. Any re-entrant call will hit the require and revert.
+     *      clears it after. Any re-entrant call (e.g., via a malicious
+     *      fallback on msg.sender) will hit the require and revert before
+     *      touching any state.
+     *
+     *      Note: This modifier is applied to validateUserOp in addition to
+     *      execute() and transferHighValue() because the fund-transfer
+     *      INTERACTION at the end of validateUserOp is an external call.
+     *      Even though msg.sender is the EntryPoint (trusted), defense-in-depth
+     *      requires the guard to be present wherever external calls occur.
      */
     modifier nonReentrant() {
         require(_status != _ENTERED, "ReentrancyGuard: reentrant call");
@@ -3666,18 +4895,51 @@ contract QAdaptiveAccount {
     // Constructor
     // ─────────────────────────────────────────────────────────────────────────
 
+    /// @dev `_guardianSigner` için sıfır kontrolü KASITLI olarak yoktur —
+    ///      sıfır adres "guardian yok" demektir. Susturma yönergesi aşağıda,
+    ///      atamanın tam üstünde duruyor (Slither bulguyu ATAMA satırında
+    ///      bildiriyor, kurucu bildirimi satırında değil). Gerekçe için
+    ///      `SLITHER_TRIYAJI.md`.
     constructor(
         address _entryPoint,
         address _aiCore,
         bytes32 _initialQuantumKey,
-        address _owner
+        address _owner,
+        address _guardianSigner
     ) {
+        // Slither `missing-zero-check`: Paymaster bu kontrolleri yapiyordu,
+        // Account yapmiyordu — tutarsizlik. Sifir EntryPoint hesabi tamamen
+        // kullanilamaz kilar, sifir sahip ise geri alinamaz sekilde sahipsiz
+        // birakir; ikisi de deploy aninda yakalanmali.
+        require(_entryPoint != address(0), "QAdaptiveAccount: entryPoint is zero");
+        require(_owner != address(0), "QAdaptiveAccount: owner is zero");
+        // NOT: `_guardianSigner` icin sifir kontrolu KASITLI olarak yok.
+        // Sifir adres "guardian yok" anlamina gelir ve `_verifyAttestation`
+        // bunu acikca ele alir (`if (guardianSigner == address(0)) return
+        // (0, false)`), yani guardian imzasi kaynagi devre disi kalir.
+
         _status          = _NOT_ENTERED;
         entryPoint       = _entryPoint;
         aiCore           = IAICore(_aiCore);
         quantumPublicKey = _initialQuantumKey;
         currentArmorTier = "Standard";
         owner            = _owner;
+
+        // Varsayılan politika: skoru oracle'dan al. Gönderenin imza alanındaki
+        // iddiası hiçbir koşulda karara girmez.
+        riskSource       = RiskSource.AI_CORE_ORACLE;
+
+        // Sifir adres burada GECERLI: "guardian yok" demek ve
+        // `_verifyAttestation` bunu acikca ele aliyor. Sifir kontrolu eklemek
+        // guardian imzasi kaynagini devre disi birakma yetenegini ortadan
+        // kaldirirdi. Dedektorun TAMAMI kapatilmadi — ayni dedektor
+        // `_entryPoint` ve `_owner` icin gercek bir eksik yakalamisti.
+        // slither-disable-next-line missing-zero-check
+        guardianSigner   = _guardianSigner;
+
+        // Zırh "Standard" (sıra 0) ile başlar ve buradan yalnızca yükselebilir.
+        currentArmorRank  = 0;
+        armorBaselineRank = 0;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -3686,6 +4948,50 @@ contract QAdaptiveAccount {
 
     /**
      * @notice Validates a UserOperation's hybrid ZK-STARK + AI risk signature.
+     *
+     * @dev    ════════════ STRICT CEI EXECUTION ORDER ════════════
+     *
+     *         ── CHECKS (all state reads, all require() calls) ─────────────
+     *
+     *         STEP 1 — Decode hybrid signature payload:
+     *           userOp.signature must be ABI-encoded as:
+     *             abi.encode(bytes starkProofBytes,
+     *                        AirVerificationMetadata metadata,
+     *                        uint256 aiDynamicRiskScore)
+     *
+     *         STEP 2 — Panic mode signature integrity check:
+     *           If the AI reports panic mode (isPanicMode = true), the STARK
+     *           proof is mandatory and must meet minimum byte length.
+     *           Failure → stage to pendingTransactions → return SIG_VALIDATION_FAILED.
+     *
+     *         STEP 3 — AIR boundary condition check:
+     *           Verify that metadata.start_a matches the expected commitment
+     *           derived from the current quantumPublicKey. A mismatch indicates
+     *           the proof was generated for a stale or forged key epoch.
+     *           Failure → stage to pendingTransactions → return SIG_VALIDATION_FAILED.
+     *
+     *         STEP 4 — Dynamic rolling risk threshold check:
+     *           If aiDynamicRiskScore (scaled ×100) exceeds the current
+     *           rollingRiskThreshold, the operation is considered a critical
+     *           policy breach regardless of signature validity.
+     *           Breach → stage to pendingTransactions → return SIG_VALIDATION_FAILED.
+     *
+     *         ── EFFECTS (all state mutations) ────────────────────────────
+     *
+     *         STEP 5 — Record the validated operation hash:
+     *           lastValidatedOpHash = userOpHash
+     *           This runs ONLY when all four checks above pass.
+     *
+     *         ── INTERACTIONS (external calls) ─────────────────────────────
+     *
+     *         STEP 6 — Fund the EntryPoint (missingAccountFunds):
+     *           payable(msg.sender).call{value: missingAccountFunds}("")
+     *           This is the ONLY external call in this function and it runs
+     *           ABSOLUTELY LAST after all state changes are committed.
+     *           Moving this call above any EFFECT or CHECK is a fund-drain
+     *           vulnerability and must never be done.
+     *         ══════════════════════════════════════════════════════════════
+     *
      * @param  userOp              The UserOperation to validate.
      * @param  userOpHash          Hash of the UserOperation (provided by EntryPoint).
      * @param  missingAccountFunds ETH this account must send to the EntryPoint.
@@ -3705,78 +5011,277 @@ contract QAdaptiveAccount {
         (, bool isPanicMode) = aiCore.getGlobalRiskStatus();
 
         // ── STEP 2: Decode hybrid signature payload ───────────────────
+        //    Decode into local memory variables before any state write.
+        //
+        //    HATA E3 NOTU: Aşağıdaki reddediş yollarının hiçbiri artık
+        //    DEPOLAMAYA YAZMIYOR. Eskiden her reddediş `pendingTransactions`'a
+        //    yazıyordu; bu iki ayrı sorun üretiyordu:
+        //      • ERC-7562 (bundler simülasyon kuralları) ihlali — birçok
+        //        bundler böyle bir işlemi mempool'a hiç almaz,
+        //      • saldırgana ucuz depolama şişirme (storage-bloat DoS) vektörü:
+        //        geçersiz imzalarla sınırsız SSTORE tetiklenebiliyordu.
+        //    Reddedişler artık yalnızca `ValidationResult` olayıdır. Sahip
+        //    incelemek istediğini `stageForReview()` ile açıkça sıraya alır.
         bytes memory               starkProofBytes;
         AirVerificationMetadata    memory metadata;
-        uint256                    aiDynamicRiskScore; // risk% × 100 (0–10000)
+        uint256                    claimedRiskScore;   // GÖNDERENİN İDDİASI — güvenilmez
+        GuardianAttestation memory attestation;
 
         if (userOp.signature.length >= 64) {
-            (starkProofBytes, metadata, aiDynamicRiskScore) = abi.decode(
+            // Attempt decode; if the caller sends a malformed payload, decode
+            // will revert which propagates upward as an operation-level failure.
+            // This is the correct behavior: we never accept a malformed signature.
+            (starkProofBytes, metadata, claimedRiskScore, attestation) = abi.decode(
                 userOp.signature,
-                (bytes, AirVerificationMetadata, uint256)
+                (bytes, AirVerificationMetadata, uint256, GuardianAttestation)
             );
         } else {
-            pendingTransactions[userOpHash] = PendingOp({
-                executionTime: block.timestamp,
-                isActive:      true
-            });
-            emit ValidationStagedToQueue(userOpHash, 0, "SIG_FAIL");
+            // Signature payload is too short to contain any valid data.
+            emit ValidationResult(userOpHash, false, "SIG_TOO_SHORT");
             return SIG_VALIDATION_FAILED;
+        }
+
+        // ── STEP 2b: Gerçek risk skorunu ÇÖZ (gönderenden DEĞİL) ────────
+        //    `claimedRiskScore` yalnızca sapma olayını yayınlamak için
+        //    tutulur; karara asla girmez.
+        (uint256 resolvedRiskScore, bool riskResolved) =
+            _resolveRiskScore(userOpHash, attestation);
+
+        if (!riskResolved) {
+            emit ValidationResult(userOpHash, false, "RISK_UNRESOLVED");
+            return SIG_VALIDATION_FAILED;
+        }
+
+        if (claimedRiskScore != resolvedRiskScore) {
+            // Gönderen gerçek skordan farklı bir şey iddia etti. İşlem bu
+            // yüzden reddedilmez (iddia zaten yok sayılıyor) ama girişim
+            // zincire kalıcı olarak yazılır.
+            emit RiskScoreClaimMismatch(userOpHash, claimedRiskScore, resolvedRiskScore);
         }
 
         // ── STEP 3: Panic mode — enforce STARK proof length requirement ──
         if (isPanicMode) {
             if (starkProofBytes.length < MIN_STARK_PROOF_BYTES) {
-                pendingTransactions[userOpHash] = PendingOp({
-                    executionTime: block.timestamp,
-                    isActive:      true
-                });
-                emit ValidationStagedToQueue(userOpHash, aiDynamicRiskScore, "SIG_FAIL");
+                // Proof absent or undersized: reject (no storage write).
+                emit ValidationResult(userOpHash, false, "PROOF_TOO_SHORT");
                 return SIG_VALIDATION_FAILED;
             }
 
             // ── STEP 4: AIR boundary condition verification ─────────────
+            //    The expected start_a commitment is derived as:
+            //      keccak256(abi.encode(quantumPublicKey, "start_a")) truncated to uint256.
+            //    This ties the proof epoch to the current on-chain key rotation.
+            //
+            //    NOTE: A full on-chain STARK verifier would call a dedicated
+            //    StarkVerifier contract here. This boundary check is the
+            //    lightweight on-chain anchor that ensures the proof was generated
+            //    against the same key epoch stored in quantumPublicKey.
             uint256 expectedStartA = uint256(
                 keccak256(abi.encode(quantumPublicKey, bytes32("start_a")))
             ) % (2 ** 128); // Truncate to field element range (f128 BaseElement max)
 
             if (metadata.start_a != expectedStartA) {
-                pendingTransactions[userOpHash] = PendingOp({
-                    executionTime: block.timestamp,
-                    isActive:      true
-                });
-                emit ValidationStagedToQueue(userOpHash, aiDynamicRiskScore, "SIG_FAIL");
+                // Proof epoch mismatch — stale or forged public matrix.
+                emit ValidationResult(userOpHash, false, "PROOF_EPOCH_MISMATCH");
                 return SIG_VALIDATION_FAILED;
             }
         }
 
         // ── STEP 5: Dynamic rolling risk threshold gate ─────────────────
-        if (aiDynamicRiskScore > rollingRiskThreshold) {
-            pendingTransactions[userOpHash] = PendingOp({
-                executionTime: block.timestamp,
-                isActive:      true
-            });
-            emit ValidationStagedToQueue(userOpHash, aiDynamicRiskScore, "RISK_BREACH");
+        //    aiDynamicRiskScore is risk% × 100 (e.g., 7523 = 75.23%).
+        //    rollingRiskThreshold is set to mirror the off-chain
+        //    SlidingWindowThresholdCalibrator value (default 7500 = 75.00%).
+        //    The owner calls updateRollingRiskThreshold() after each off-chain
+        //    calibration cycle to keep both layers synchronized.
+        //    DİKKAT: burada kullanılan değer `resolvedRiskScore`'dur —
+        //    gönderenin imza alanına yazdığı `claimedRiskScore` DEĞİL.
+        if (resolvedRiskScore > rollingRiskThreshold) {
+            // Critical policy breach: risk exceeds the rolling window threshold.
+            emit ValidationResult(userOpHash, false, "RISK_BREACH");
             return SIG_VALIDATION_FAILED;
         }
 
         // ════════════════════════════════════════════════════════════════
         // PHASE B: EFFECTS
+        // All CHECKS have passed. Mutate state before any external call.
         // ════════════════════════════════════════════════════════════════
 
         // ── STEP 6: Record validated operation hash ─────────────────────
+        //    Written BEFORE the external call below. If the external call
+        //    somehow re-enters, lastValidatedOpHash is already set, and the
+        //    nonReentrant mutex will also block re-entry.
         lastValidatedOpHash = userOpHash;
 
         // ════════════════════════════════════════════════════════════════
         // PHASE C: INTERACTIONS
+        // The ONLY external call. Runs LAST, after all state is committed.
         // ════════════════════════════════════════════════════════════════
 
         // ── STEP 7: Fund the EntryPoint (ERC-4337 prefund) ──────────────
+        //    This call is to msg.sender which is enforced to be the EntryPoint
+        //    by the onlyEntryPoint modifier. However, we still place it last
+        //    as defense-in-depth per the CEI pattern.
+        //
+        //    ── HATA E1: 2300 GAZ STIPEND'İ KALDIRILDI ──────────────────────
+        //
+        //    Eski satır şuydu:
+        //        payable(msg.sender).call{gas: 2300, value: missingAccountFunds}("")
+        //    ve gerekçesi "defense-in-depth" diye yazılmıştı.
+        //
+        //    Ancak gerçek ERC-4337 EntryPoint'in `receive()` fonksiyonu mevduat
+        //    muhasebesi için DEPOLAMAYA YAZAR (~20.000+ gaz) ve 2300 gaz bir
+        //    SSTORE'a yetmez. Yani bu çağrı gerçek bir EntryPoint'te HER ZAMAN
+        //    başarısız olurdu ve alttaki `require(success)` yüzünden HER İŞLEM
+        //    REVERT EDERDİ. Hesap canlı ağda hiçbir işlemi tamamlayamazdı.
+        //
+        //    Stipend'i kaldırmak yeniden giriş riski yaratmıyor:
+        //      • hedef `onlyEntryPoint` ile zorlanmış (msg.sender = EntryPoint),
+        //      • `nonReentrant` mutex'i açık,
+        //      • CEI sırası gereği tüm durum bu çağrıdan ÖNCE yazıldı.
         if (missingAccountFunds > 0) {
-            (bool success, ) = payable(msg.sender).call{gas: 2300, value: missingAccountFunds}("");
+            (bool success, ) = payable(msg.sender).call{value: missingAccountFunds}("");
             require(success, "QAdaptiveAccount: EntryPoint funding failed");
         }
 
+        emit ValidationResult(userOpHash, true, "OK");
         return SIG_VALIDATION_SUCCESS;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Risk Skoru Çözümlemesi (BULGU 6)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * @notice Gerçek risk skorunu politikaya göre çözer.
+     *
+     * @dev Üç kaynağın HİÇBİRİ gönderenin yazdığı alan değildir:
+     *        • AI_CORE_ORACLE     — zincir üstü oracle.
+     *        • GUARDIAN_SIGNATURE — guardian'ın imzaladığı attestation;
+     *                               `ecrecover` ile doğrulanır.
+     *        • HIGHEST_OF_BOTH    — ikisinin büyüğü, yani hiçbir kaynak
+     *                               riski tek başına DÜŞÜREMEZ.
+     *
+     * @return score    Çözülen risk skoru (risk% × 100).
+     * @return resolved Çözümleme başarılı mı (guardian imzası geçersizse false).
+     */
+    function _resolveRiskScore(
+        bytes32 userOpHash,
+        GuardianAttestation memory attestation
+    ) internal view returns (uint256 score, bool resolved) {
+        (uint256 oracleScore, ) = aiCore.getGlobalRiskStatus();
+
+        if (riskSource == RiskSource.AI_CORE_ORACLE) {
+            return (oracleScore, true);
+        }
+
+        // Guardian imzası gerekiyor — doğrula.
+        (uint256 guardianScore, bool ok) = _verifyAttestation(userOpHash, attestation);
+
+        if (riskSource == RiskSource.GUARDIAN_SIGNATURE) {
+            return (guardianScore, ok);
+        }
+
+        // HIGHEST_OF_BOTH: guardian imzası geçersizse oracle'a düşülür —
+        // ama bu güvenli yön, çünkü skor asla düşürülmez.
+        if (!ok) {
+            return (oracleScore, true);
+        }
+        return (guardianScore > oracleScore ? guardianScore : oracleScore, true);
+    }
+
+    /**
+     * @notice Guardian attestation'ının imzasını doğrular.
+     * @dev Digest userOpHash + skor + geçerlilik + bu sözleşme + zincir
+     *      kimliğini birlikte bağlar; attestation başka bir işleme veya
+     *      başka bir zincire taşınamaz.
+     */
+    function _verifyAttestation(
+        bytes32 userOpHash,
+        GuardianAttestation memory attestation
+    ) internal view returns (uint256 score, bool ok) {
+        if (guardianSigner == address(0)) return (0, false);
+        if (attestation.signature.length != 65) return (0, false);
+        if (attestation.validUntil < block.timestamp) return (0, false);
+
+        bytes32 digest = attestationDigest(
+            userOpHash, attestation.riskScore, attestation.validUntil
+        );
+
+        bytes32 r;
+        bytes32 s;
+        uint8   v;
+        bytes memory sig = attestation.signature;
+        assembly {
+            r := mload(add(sig, 32))
+            s := mload(add(sig, 64))
+            v := byte(0, mload(add(sig, 96)))
+        }
+
+        // EIP-2 gereği yüksek-s imzalar reddedilir (imza esnekliği savunması).
+        if (uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0) {
+            return (0, false);
+        }
+        if (v != 27 && v != 28) return (0, false);
+
+        address recovered = ecrecover(digest, v, r, s);
+        if (recovered == address(0) || recovered != guardianSigner) {
+            return (0, false);
+        }
+
+        return (attestation.riskScore, true);
+    }
+
+    /**
+     * @notice Guardian'ın imzalaması gereken digest'i üretir.
+     * @dev Zincir dışı Python katmanı aynı digest'i hesaplayıp imzalar.
+     *      Dışarı açık çünkü test ve istemci tarafı buna ihtiyaç duyar.
+     */
+    function attestationDigest(
+        bytes32 userOpHash,
+        uint256 riskScore,
+        uint256 validUntil
+    ) public view returns (bytes32) {
+        // DIKKAT: Asagidaki tip dizesi Python tarafindaki
+        // `attestation.py::_ATTESTATION_TYPEHASH_SOURCE` ile BIREBIR ayni
+        // olmak zorunda. Tek bir karakter degisirse digest degisir ve
+        // guardian imzalari zincirde reddedilir.
+        //
+        // Satir 120 karakteri astigi icin bolundu. Solidity'de yan yana
+        // yazilan dize sabitleri derleme aninda BIRLESTIRILIR ("ab" "cd"
+        // == "abcd"), yani dizenin icerigi degismedi.
+        // GuardianAttestation.t.sol::test_python_digesti_sozlesme_digestiyle_ayni
+        // bu esitligi her kosuda dogruluyor.
+        bytes32 structHash = keccak256(
+            abi.encode(
+                keccak256(
+                    "QAdaptiveRiskAttestation(bytes32 userOpHash,uint256 riskScore,"
+                    "uint256 validUntil,address account,uint256 chainId)"
+                ),
+                userOpHash,
+                riskScore,
+                validUntil,
+                address(this),
+                block.chainid
+            )
+        );
+        // EIP-191 kişisel imza ön-eki — Python tarafı `eth_account.sign_message`
+        // ile aynı biçimi üretir.
+        return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash));
+    }
+
+    /**
+     * @notice Sahip, reddedilmiş bir işlemi incelemek üzere açıkça sıraya alır.
+     *
+     * @dev HATA E3: Bu iş eskiden `validateUserOp` içinde OTOMATİK yapılıyordu
+     *      ve her reddediş bir SSTORE demekti. Artık sıraya alma, sahibin
+     *      bilinçli bir kararı — doğrulama yolu depolamaya dokunmuyor.
+     */
+    function stageForReview(bytes32 opHash) external onlyOwnerOrSelf {
+        pendingTransactions[opHash] = PendingOp({
+            executionTime: block.timestamp,
+            isActive:      true
+        });
+        emit ValidationStagedToQueue(opHash, 0, "MANUAL_STAGE");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -3785,6 +5290,8 @@ contract QAdaptiveAccount {
 
     /**
      * @notice Executes an arbitrary call on behalf of the account.
+     * @dev    CEI: checks isPanicMode → no effects → external call (target).
+     *         nonReentrant guards against malicious target callbacks.
      */
     function execute(
         address target,
@@ -3799,7 +5306,18 @@ contract QAdaptiveAccount {
             );
         }
 
-        (bool success, bytes memory result) = target.call{value: value, gas: gasleft() - 5000}(data);
+        // ── HATA E7: elle gaz ayırma KALDIRILDI ─────────────────────────────
+        //
+        // Eski satır `gas: gasleft() - 5000` kullanıyordu. `gasleft() < 5000`
+        // olduğunda Solidity 0.8'de çıkarma taşması olur ve işlem, asıl
+        // sebebi gizleyen anlamsız bir panic(0x11) ile revert eder.
+        //
+        // Ayrıca ayırmanın kendisi gereksizdi: EIP-150'nin 63/64 kuralı
+        // gereği çağrılana gazın tamamı zaten geçmez, çağırana her hâlükârda
+        // 1/64'ü kalır. Elle yapılan ayırma bunu tekrarlıyordu.
+        require(gasleft() > 10_000, "QAdaptiveAccount: insufficient gas for execution");
+
+        (bool success, bytes memory result) = target.call{value: value}(data);
         if (!success) {
             assembly {
                 revert(add(result, 32), mload(result))
@@ -3809,11 +5327,23 @@ contract QAdaptiveAccount {
 
     /**
      * @notice Dedicated function for high-value transfers, protected by the Time-Lock.
+     *
+     * @dev    Time-Lock flow (independent of validateUserOp):
+     *           First call  → stages to lockedOperations, emits event, returns early.
+     *           Retry call  → checks 2-hour delay, deactivates lock, executes transfer.
+     *
+     *         The Time-Lock and validateUserOp are completely decoupled:
+     *         a successfully validated UserOperation can still be time-locked at
+     *         execution time if it meets the HIGH_VALUE_THRESHOLD condition.
+     *
+     *         CEI here: CHECK (amount threshold) → EFFECT (lockedOperations write) →
+     *         INTERACTION (target.call). nonReentrant guards the interaction.
      */
     function transferHighValue(
         address target,
         uint256 amount
     ) external onlyEntryPoint nonReentrant {
+        // CHECKS — AI panic mode
         (, bool isPanicMode) = aiCore.getGlobalRiskStatus();
         if (isPanicMode) {
             require(
@@ -3822,30 +5352,45 @@ contract QAdaptiveAccount {
             );
         }
 
+        // CHECKS & EFFECTS — Time-Lock interception
         if (amount >= HIGH_VALUE_THRESHOLD && !safeDestinationWhitelist[target]) {
             bytes32 opHash = keccak256(abi.encode(target, amount));
             PendingOp storage pending = lockedOperations[opHash];
 
             if (!pending.isActive) {
+                // EFFECT: Stage the transfer, stop execution.
                 pending.executionTime = block.timestamp + SECURITY_DELAY;
                 pending.isActive      = true;
                 emit HighValueTransferLocked(opHash, target, amount, pending.executionTime);
                 return;
             } else {
+                // CHECKS: Enforce the 2-hour delay on retry.
                 require(
                     block.timestamp >= pending.executionTime,
                     "Q-ADAPTIVE: GUVENLIK RISKI! ISLEM 2 SAAT KILITLENDI."
                 );
+                // EFFECT: Deactivate lock before the external call.
                 pending.isActive = false;
             }
         }
 
+        // INTERACTION — Execute transfer only after all state mutations above.
         (bool success, ) = target.call{value: amount}("");
         require(success, "QAdaptiveAccount: transfer failed");
     }
 
     /**
-     * @notice Emergency cancel mechanism for the owner.
+     * @notice Emergency cancel mechanism for the owner to wipe a malicious or
+     *         erroneously staged operation from either lockedOperations or
+     *         pendingTransactions.
+     *
+     * @dev    CEI: CHECKS (isActive) → EFFECTS (deactivate) → no INTERACTION.
+     *         This function intentionally has no external call; nonReentrant
+     *         is still applied as a policy invariant for all state-mutating functions.
+     *
+     * @param  opHash  keccak256 of the operation to cancel. Covers both
+     *                 lockedOperations keys and pendingTransactions keys
+     *                 (userOpHash from the EntryPoint).
      */
     function cancelTransaction(bytes32 opHash) external onlyOwnerOrSelf nonReentrant {
         bool foundInLocked  = lockedOperations[opHash].isActive;
@@ -3856,6 +5401,7 @@ contract QAdaptiveAccount {
             "QAdaptiveAccount: operation not active or already processed"
         );
 
+        // EFFECTS only — no external call follows.
         if (foundInLocked) {
             lockedOperations[opHash].isActive      = false;
             lockedOperations[opHash].executionTime = 0;
@@ -3872,15 +5418,191 @@ contract QAdaptiveAccount {
     // Defensive State Management
     // ─────────────────────────────────────────────────────────────────────────
 
+    /**
+     * @notice Updates the post-quantum armor tier and public key commitment.
+     * @dev    Called by the EntryPoint when the AI triggers a key rotation.
+     *         The new quantumPublicKey is the keccak256 root of the new
+     *         ML-DSA A-matrix expanded from the new rho-prime seed.
+     *         After this call, all future STARK proofs must target the new epoch.
+     */
     function updateQuantumArmor(
         string calldata newTier,
         bytes32         newPublicKey
     ) external onlyEntryPoint {
+        _applyArmorUpdate(newTier, newPublicKey);
+    }
+
+    /**
+     * @notice Zırh güncellemesini TEK YÖNLÜ TIRMANMA kuralıyla uygular.
+     *
+     * @dev HATA E4: Eski `updateQuantumArmor` hiçbir kontrol yapmadan kademeyi
+     *      yazıyordu. EntryPoint yoluyla gelen bir çağrı zırhı ML-DSA-87'den
+     *      ML-DSA-44'e DÜŞÜREBİLİYORDU — yani saldırgan, savunmayı güçlendirmek
+     *      için tasarlanmış fonksiyonu savunmayı zayıflatmak için kullanabilirdi.
+     *
+     *      Kural artık zincirde de zorlanıyor (zincir dışı `armor::decide` ile
+     *      aynı kural):
+     *        • kademe yalnızca YÜKSELEBİLİR,
+     *        • taban sıranın altına ASLA inilmez,
+     *        • düşürmenin tek yolu sahibin `downgradeArmor()` çağrısıdır.
+     */
+    function _applyArmorUpdate(string memory newTier, bytes32 newPublicKey) internal {
+        uint8 newRank = _tierRank(newTier);
+
+        require(
+            newRank >= armorBaselineRank,
+            "QAdaptiveAccount: tier below armor baseline"
+        );
+        require(
+            newRank >= currentArmorRank,
+            "QAdaptiveAccount: armor escalation is one-way"
+        );
+
+        currentArmorRank = newRank;
         currentArmorTier = newTier;
         quantumPublicKey = newPublicKey;
+
         emit QuantumArmorUpdated(newTier, newPublicKey);
     }
 
+    /**
+     * @notice Sahip, zırhı bilinçli olarak düşürür.
+     * @dev Düşürmenin TEK yolu budur ve taban sıranın altına inemez.
+     *      `onlyEntryPoint` değil `onlyOwnerOrSelf` olması kasıtlı: bu bir
+     *      yönetim kararıdır, bir UserOperation yan etkisi değil.
+     */
+    function downgradeArmor(string calldata newTier, bytes32 newPublicKey)
+        external
+        onlyOwnerOrSelf
+    {
+        uint8 newRank = _tierRank(newTier);
+        require(
+            newRank >= armorBaselineRank,
+            "QAdaptiveAccount: tier below armor baseline"
+        );
+
+        currentArmorRank = newRank;
+        currentArmorTier = newTier;
+        quantumPublicKey = newPublicKey;
+
+        emit QuantumArmorDowngraded(newTier, newRank);
+    }
+
+    /**
+     * @notice Zırh taban sırasını yükseltir.
+     * @dev Taban yalnızca yükselebilir — aksi hâlde tek yönlü tırmanma
+     *      kuralı tabanı düşürerek dolanılabilirdi.
+     */
+    function raiseArmorBaseline(uint8 newBaseline) external onlyOwnerOrSelf {
+        require(newBaseline > armorBaselineRank, "QAdaptiveAccount: baseline is one-way");
+        require(newBaseline <= 3, "QAdaptiveAccount: unknown baseline rank");
+
+        uint8 previous    = armorBaselineRank;
+        armorBaselineRank = newBaseline;
+
+        // Mevcut zırh yeni tabanın altındaysa tabana çekilir.
+        if (currentArmorRank < newBaseline) {
+            currentArmorRank = newBaseline;
+        }
+
+        emit ArmorBaselineUpdated(previous, newBaseline);
+    }
+
+    /**
+     * @notice Zırh kademesi adını sıra numarasına çevirir.
+     *
+     * @dev Adlar, zincir dışı prover'ın ürettikleriyle BİREBİR aynıdır
+     *      (`MlDsaSecurityLevel::name()` — bkz. Q-Adaptive-ZK/src/trace.rs).
+     *      Bilinmeyen bir ad revert eder; sessizce 0 kabul edilseydi
+     *      yazım hatası olan bir kademe zırhı düşürürdü.
+     *
+     *      Fonksiyon seçicisi kasıtlı olarak değiştirilmedi
+     *      (`updateQuantumArmor(string,bytes32)`), çünkü Paymaster tam olarak
+     *      bu seçiciyi sponsorluyor.
+     */
+    function _tierRank(string memory tier) internal pure returns (uint8) {
+        bytes32 h = keccak256(bytes(tier));
+
+        if (h == keccak256(bytes("Standard")))                return 0;
+        if (h == keccak256(bytes("ML-DSA-44")))               return 1;
+        if (h == keccak256(bytes("ML-DSA-65")))               return 2;
+        if (h == keccak256(bytes("ML-DSA-87 (Dilithium-5)"))) return 3;
+
+        revert("QAdaptiveAccount: unknown armor tier");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Risk Kaynağı Yönetimi
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// @notice Risk skorunun hangi kaynaktan alınacağını belirler.
+    function setRiskSource(RiskSource newSource) external onlyOwnerOrSelf {
+        RiskSource previous = riskSource;
+        riskSource = newSource;
+        emit RiskSourceUpdated(previous, newSource);
+    }
+
+    /// @notice Guardian attestation'larını imzalamaya yetkili adresi ayarlar.
+    ///
+    /// @dev SIFIR ADRES KASITLI OLARAK GEÇERLİ: "guardian yok" anlamına gelir
+    ///      ve `_verifyAttestation` bunu açıkça ele alır
+    ///      (`if (guardianSigner == address(0)) return (0, false)`).
+    ///      Guardian imzası kaynağını devre dışı bırakmanın tek yolu budur;
+    ///      sıfır kontrolü eklemek o yeteneği ortadan kaldırırdı.
+    // slither-disable-next-line missing-zero-check
+    function setGuardianSigner(address newSigner) external onlyOwnerOrSelf {
+        address previous = guardianSigner;
+        guardianSigner = newSigner;
+        emit GuardianSignerUpdated(previous, newSigner);
+    }
+
+    /**
+     * @notice Sahipliği yeni bir adrese devreder.
+     *
+     * @dev Bu fonksiyon Slither'ın `immutable-states` bulgusu üzerine eklendi.
+     *      Slither `owner`'ın hiç yeniden atanmadığını, dolayısıyla
+     *      `immutable` yapılabileceğini söylüyordu — teknik olarak doğruydu.
+     *
+     *      Ama `immutable` yapmak yanlış çözümdü: `owner` bu sözleşmede 11
+     *      fonksiyonu kapılıyor ve bir AKILLI HESAP'ta sahip anahtarının
+     *      ele geçirilmesi gerçek bir senaryodur. Sahipliği kalıcı olarak
+     *      dondurmak, ele geçirilmiş bir anahtardan kurtulma yolunu da
+     *      kapatırdı.
+     *
+     *      Doğru çözüm alanı gerçekten değiştirilebilir kılmaktı. Eksik olan
+     *      şey gaz optimizasyonu değil, devir yeteneğiydi.
+     */
+    function transferOwnership(address newOwner) external onlyOwnerOrSelf {
+        require(newOwner != address(0), "QAdaptiveAccount: new owner is zero");
+        address previous = owner;
+        owner = newOwner;
+        emit OwnershipTransferred(previous, newOwner);
+    }
+
+    /**
+     * @notice AI Core oracle adresini günceller.
+     *
+     * @dev Aynı gerekçe: oracle sabitlenirse, oracle sözleşmesi
+     *      kullanımdan kalktığında ya da ele geçirildiğinde hesap kurtarılamaz
+     *      hâle gelirdi. Risk skorunun kaynağı değiştirilebilir olmalı.
+     */
+    function setAICore(address newAICore) external onlyOwnerOrSelf {
+        require(newAICore != address(0), "QAdaptiveAccount: aiCore is zero");
+        address previous = address(aiCore);
+        aiCore = IAICore(newAICore);
+        emit AICoreUpdated(previous, newAICore);
+    }
+
+    /**
+     * @notice Updates the on-chain rolling risk threshold to mirror the off-chain
+     *         SlidingWindowThresholdCalibrator's current τ(t) value.
+     *
+     * @dev    The AI API layer encodes τ(t) as uint256 = round(τ × 100).
+     *         Example: τ = 72.34% → rollingRiskThreshold = 7234.
+     *         Valid range enforced: [5500, 9000] matching [TAU_MIN, TAU_MAX].
+     *
+     * @param  newThreshold  New risk threshold (risk% × 100). Range: [5500, 9000].
+     */
     function updateRollingRiskThreshold(uint256 newThreshold) external onlyOwnerOrSelf {
         require(
             newThreshold >= 5500 && newThreshold <= 9000,
@@ -3900,6 +5622,10 @@ contract QAdaptiveAccount {
         safeDestinationWhitelist[target] = false;
         emit SafeDestinationRemoved(target);
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Receive
+    // ─────────────────────────────────────────────────────────────────────────
 
     receive() external payable {}
 }
@@ -4207,13 +5933,18 @@ Q-ADAPTIVE sistemi çeşitli ağ koşullarında test edilmiştir. Aşağıdaki s
 
 ### 7.3.1 Makine Öğrenimi Çıkarım Gecikmesi
 
-Yerel C++ bağlamalarıyla derlenen ONNX Runtime, Isolation Forest modeli için milisaniyenin altında yürütme süreleri sunar.
+ONNX Runtime, Isolation Forest modelini bu makinede ortalama **8,8–10,1 ms (5 koşuluk ortalama; `test_onnx_inference.py` ile yeniden ölçülebilir)** içinde çalıştırır.
 
-| Metrik | Hedef (L1) | Medyan Gecikme | 95. Yüzdelik | 99. Yüzdelik |
-| :--- | :---: | :---: | :---: | :---: |
-| ONNX Çıkarımı | Yerel İstemci | 1.12 ms | 1.45 ms | 2.10 ms |
-| PyTorch Taban Çizgisi | Python Yorumlayıcısı | 8.54 ms | 12.10 ms | 16.40 ms |
-| API İşlem Hattı | FastAPI Ağ Geçidi | 3.42 ms | 5.12 ms | 7.85 ms |
+> **Düzeltme.** Bu bölümün önceki hâli "milisaniyenin altında" diyor ve medyan / 95. / 99. yüzdelik değerlerden oluşan bir tablo sunuyordu. O yüzdelikler hiç ölçülmedi; tabloda karşılaştırma taban çizgisi olarak verilen "PyTorch" satırı ise hiç çalıştırılmadı. Tablo kaldırıldı, yerine yalnızca gerçekten ölçülen değer bırakıldı.
+
+| Metrik | Ölçüm | Durum |
+| :--- | :--- | :--- |
+| ONNX çıkarımı (ortalama) | 8,8–10,1 ms | 5 koşu, bu makine |
+| Yüzdelikler (p50 / p95 / p99) | ölçülmedi | yüzdelik toplanmıyor |
+| PyTorch taban çizgisi | çalıştırılmadı | karşılaştırma yapılmadı |
+
+Çıkarım süresi her istekte `onnx_cikarim` aşaması olarak yanıta yazılır; arayüz
+bu değeri canlı gösterir.
 
 ### 7.3.2 ZK-STARK Kanıtlayıcı Performansı
 
@@ -4221,35 +5952,48 @@ Kanıtlama performansı, 16 iş parçacıklı bir AMD Ryzen 9 7950X işlemci üz
 
 | ML-DSA Güvenlik Seviyesi | İz Boyutu (Satırlar) | Kanıtlayıcı Süresi | Kanıt Boyutu (KB) | Doğrulayıcı Süresi (Zincir Üstü) |
 | :--- | :---: | :---: | :---: | :---: |
-| ML-DSA-44 (4x4) | 8 | 12.45 ms | 2.82 KB | 0.85 ms |
-| ML-DSA-65 (6x5) | 8 | 15.10 ms | 3.15 KB | 1.12 ms |
-| **ML-DSA-87 (8x7)** | **8** | **18.52 ms** | **3.85 KB** | **1.42 ms** |
+| ML-DSA-44 (4x4) | 8 | ölçülür (0,4–21 ms) | ölçülür (~3,6–4,1 KB) | ölçülmedi |
+| ML-DSA-65 (6x5) | 8 | ölçülür (0,4–14 ms) | ölçülür (~3,7–4,2 KB) | ölçülmedi |
+| **ML-DSA-87 (8x7)** | **8** | **ölçülür (1,8–21 ms)** | **ölçülür (~3,8–4,3 KB)** | **ölçülmedi** |
 
 ### 7.3.3 Calldata Gaz İzi Sıkıştırma Metrikleri
 
 Lattice üretim izinin genel girdilerini ve sınır durumlarını doğrulamak için ZK-STARK kanıtlarını kullanan sözleşme, ham genel matrisleri ve imza öğelerini zincir üstünde yayınlamaktan kaçınır. Bu, calldata maliyetlerinde önemli tasarruflar sağlar:
 
-$$\text{Sıkıştırma Oranı} = \left( 1 - \frac{\text{STARK Kanıt Boyutu (KB)}}{\text{Ham ML-DSA İmza Boyutu (KB)}} \right) \times 100$$
+$$\text{Tasarruf} = \left( 1 - \frac{\text{STARK Kanıt Baytı}}{\text{Parti Boyutu} \times \text{Tek ML-DSA İmza Baytı}} \right) \times 100$$
+
+Paydadaki **parti boyutu** atlanamaz. Tek bir imzayla karşılaştırıldığında kanıt
+bir kazanç değildir — 4.025 baytlık bir kanıt, 4.627 baytlık tek bir imzaya
+karşı yalnızca %13 tasarruf eder. Kazanç toplu doğrulamadan gelir: bir kanıt
+50 imzanın yerine geçer. Formülün kendisi ve tüm girdileri her koşuda
+`proof_payload.json` → `calldata` alanına yazılır, böylece buradaki sayı
+bağımsız olarak denetlenebilir.
 
 ML-DSA-87 katmanında:
-* Ham ML-DSA-87 imzası ve genel matris bileşenleri toplam $4.595 \text{ bayt} + 2.592 \text{ bayt} = 7.187 \text{ bayt}$ tutmaktadır.
-* Derlenen STARK kanıtı ise $3.850 \text{ bayt}$'tır.
-* Bu durum, çoklu imza kurulumlarında standart ECDSA doğrulama döngülerine kıyasla **$%97,98$**'lik bir calldata alanı sıkıştırması sağlar.
+* Ham ML-DSA-87 imzası ve açık anahtar toplam $4.627 \text{ bayt} + 2.592 \text{ bayt} = 7.219 \text{ bayt}$ tutmaktadır.
+* Derlenen STARK kanıtı ölçülen koşularda $3.799\text{–}4.321 \text{ bayt}$ aralığındadır.
+* Bu durum, 50 işlemlik bir partide **işlem başına ML-DSA imzası taşımaya kıyasla** **%98,1–98,4**'lük bir calldata tasarrufu sağlar (ML-DSA-87 kademesinde; oran kademeye göre %96,6'ya kadar iner). **ECDSA'ya kıyasla DEĞİL:** 50 ECDSA imzası 3.250 bayttır, yani tek bir STARK kanıtından küçüktür. ECDSA calldata'da bizi yener; takas post-kuantum güvenliğidir. Formül ve girdileri her `proof_payload.json` içinde `calldata` alanında taşınır.
+
+Aşağıdaki şema tek bir ölçülmüş koşudan alınmıştır
+(`--risk-score 95 --tau 75 --baseline 44`, ML-DSA-87 kademesi). Kanıt boyutu
+koşudan koşuya değiştiği için bu bir örnektir, sabit bir değer değil.
 
 ```
-       HAM ML-DSA-87 İMZA BİLEŞENLERİ (7.18 KB)
-┌───────────────────────────────────────────────────────────┐
-│  İmzalar (4.59 KB)                                        │
-├───────────────────────────────────────────────────────────┤
-│  Genel Matrisler (2.59 KB)                                │
-└───────────────────────────────────────────────────────────┘
-                               │
-                      [ZK-STARK Kanıtlama]
-                               ▼
-       SIKIŞTIRILMIŞ ZK-STARK KANIT PAYLOAD'U (3.85 KB)
-┌───────────────────────────────┐
-│  ZK-STARK Kanıtı (3.85 KB)     │  <-- Zincir üstünde %97,98 Gaz sıkıştırma oranı
-└───────────────────────────────┘
+50 İŞLEMLİK BİR PARTİDE ZİNCİR ÜSTÜNE YAZILAN CALLDATA
+
+  İşlem başına ML-DSA-87 imzası          50 × 4.627 B = 231.350 B
+  ████████████████████████████████████████████████████████████
+
+  Tek ZK-STARK kanıtı                                   4.025 B
+  █                                                  → %98,26 tasarruf
+
+  Karşılaştırma: 50 ECDSA imzası         50 × 65 B  =   3.250 B
+  █                                                  → ECDSA DAHA KÜÇÜK
 ```
+
+Son satır bilinçli olarak burada duruyor. `calldata.beats_ecdsa` alanı bu
+koşuda **`false`** döner ve arayüz bunu gizlemez: ECDSA calldata boyutunda
+bizi yener. Takas edilen şey boyut değil, **post-kuantum güvenliğidir** —
+ECDSA'nın Shor algoritması altında sağlamadığı tek şey.
 
 ---

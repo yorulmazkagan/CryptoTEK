@@ -378,9 +378,10 @@ def generate_report():
     ))
     story.append(Paragraph(
         "Winterfell motorunun hızlı çalışması için Rust kodları optimize edilmiş ve release modunda derlenmiştir. "
-        "Kanıt üretimi (prover time) ortalama <b>50-60 milisaniye</b> sürmekte ve üretilen kanıt boyutu yaklaşık <b>3.85 Kilobayt</b> "
-        "olmaktadır. Bu son derece optimize değerler, ZK kanıtlarının işlem süresini geciktirmeden gerçek zamanlı olarak "
-        "blokzincir sistemlerinde kullanılabilmesini sağlar.",
+        "Kanıt üretim süresi ve kanıt boyutu her koşuda yeniden ölçülür; sabit bir değer olarak "
+        "sunulamaz. Ölçülen aralıklar: prover <b>0,4-21 ms</b>, kanıt boyutu <b>3.617-4.321 bayt</b> "
+        "(ML-DSA kademesine ve makineye göre değişir). Bu değerler <code>proof_payload.json</code> "
+        "içine yazılır ve arayüzde canlı gösterilir, yani bağımsız olarak doğrulanabilir.",
         normal
     ))
     story.append(PageBreak())
@@ -569,9 +570,12 @@ def generate_report():
     story.append(Paragraph(
         "<b>Senaryo 2: Bot Saldırısı / DeFi Flash Loan Spam</b><br/>"
         "• <b>Parametreler:</b> İşlem Sıklığı: 50.0, IP Sapması: 0.05, Gas Sapması: 0.1<br/>"
-        "• <b>AI Analiz Sonucu:</b> Aşırı yüksek işlem sıklığı nedeniyle risk skoru <b>%98.52</b> olarak hesaplanır.<br/>"
+        "• <b>AI Analiz Sonucu:</b> Aşırı yüksek işlem sıklığı nedeniyle risk skoru eşiğin "
+        "üzerine çıkar ve panik modu tetiklenir. Kesin skor modele ve girdiye bağlıdır; "
+        "sabit bir değer olarak sunulmaz.<br/>"
         "• <b>Sistem Reaksiyonu:</b> Sistem alarm durumuna geçer (TRIGGER_PANIC_MODE). Post-kuantum zırhı "
-        "en yüksek seviye olan <b>ML-DSA-87</b>'ye yükseltilir. Rust prover çalıştırılarak <b>3.85 KB</b> boyutunda "
+        "en yüksek seviye olan <b>ML-DSA-87</b>'ye yükseltilir. Rust prover çalıştırılarak "
+        "<b>ölçülen boyutta</b> (bu kademede 3.799-4.321 bayt) "
         "bir ZK-STARK kanıtı üretilir. Akıllı sözleşme işlemi onaylar ancak cüzdanı kilitleyerek <b>2 saatlik geri sayım</b> "
         "başlatır. İşlem askıya alınır.",
         normal
@@ -580,7 +584,7 @@ def generate_report():
         "<b>Senaryo 3: Private Key Çalınması / Drainer Saldırısı</b><br/>"
         "• <b>Parametreler:</b> İşlem Sıklığı: 2.0, IP Sapması: 0.95, Gas Sapması: 15.5<br/>"
         "• <b>AI Analiz Sonucu:</b> Alışılmadık IP coğrafyası ve aşırı yüksek gas kullanımı nedeniyle risk skoru "
-        "<b>%99.99</b> (veya %100) olarak hesaplanır.<br/>"
+        "eşiğin belirgin biçimde üzerinde hesaplanır. Kesin skor girdiye bağlıdır.<br/>"
         "• <b>Sistem Reaksiyonu:</b> En üst düzey alarm verilir. Zırh <b>ML-DSA-87</b>'ye çıkarılır, ZK kanıtı eklenir "
         "ve işlem 2 saatliğine askıya alınır. Kullanıcı dashboard üzerinden işlemi fark edip <code>cancelTransaction</code> "
         "çağrısı yaparak saldırganın parayı çekmesini engeller.",
@@ -702,7 +706,7 @@ Geri sayım bittiğinde veya geçerli ZK kanıtı doğrulandığında kilit aç�
     screenshots = [
         ("default_telemetry.png", "Görüntü B.1: Canlı Telemetri Arayüzü — Sistem Boşta (Idle) Durumu"),
         ("standard_telemetry.png", "Görüntü B.2: Standart DeFi Swap Senaryosu — SAFE Durumu (%72.36 Risk)"),
-        ("bot_telemetry.png", "Görüntü B.3: Bot Saldırısı Senaryosu — PANIC Durumu (%98.52 Risk)"),
+        ("bot_telemetry.png", "Görüntü B.3: Bot Saldırısı Senaryosu — PANIC Durumu"),
         ("simulation_injector.png", "Görüntü B.4: Simülasyon Enjektörü ve API Yanıt JSON Önizlemesi"),
         ("zkstark_logic.png", "Görüntü B.5: ZK-STARK Kanıt Metrikleri ve AIR Durumu İzleme Paneli"),
         ("onchain_tracker.png", "Görüntü B.6: Zincir İçi İzleyici ve Timelock Geri Sayım Widgetı")

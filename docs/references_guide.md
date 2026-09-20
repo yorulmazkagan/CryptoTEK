@@ -115,7 +115,8 @@ Bu belge, **CryptoTEK** takımı tarafından geliştirilen **Q-ADAPTIVE** projes
     - **İlişkili Slaytlar**: [Slayt 24](#slayt-24), [Slayt 32](#slayt-32)
 
 24. **ONNX Runtime Dev Team. (2020). "ONNX Runtime: Cross-platform, high-performance ML inferencing." *Microsoft*.**
-    - **Açıklama**: model.py motorumuzun Python ve webassembly katmanlarında hızlı çıkarım (1.12ms) yapmasını sağlayan ONNX kütüphanesi belgeleri.
+    - **Açıklama**: model.py motorumuzun çıkarımı (bu makinede ortalama 8,8–10,1 ms)
+      yürütmesini sağlayan ONNX kütüphanesi belgeleri.
     - **İlişkili Slaytlar**: [Slayt 25](#slayt-25), [Slayt 26](#slayt-26)
 
 25. **Pedregosa, F., Varoquaux, G., et al. (2011). "Scikit-learn: Machine learning in Python." *JMLR*.**

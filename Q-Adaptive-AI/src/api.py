@@ -4,7 +4,8 @@
 # Production-Grade Refactor:
 #   • subprocess.run(["cargo", "run"]) TAMAMEN KALDIRILDI
 #   • asyncio.create_subprocess_exec → Önceden derlenmiş release binary'e yönlendirir
-#   • asyncio.Queue(maxsize=50) → Sunucu kaynaklarını DoS'tan korur
+#   • asyncio.Queue → Sunucu kaynaklarını DoS'tan korur. Kapasite sabit değil;
+#     _resolve_queue_capacity() ile makinenin çekirdek/bellek miktarından türetilir.
 #   • HTTP 429 "Cryptographic Proof Queue Saturated" → Kuyruğu doldurmaya çalışan
 #     saldırganları durdurur
 #   • SlidingWindowThresholdCalibrator (model.py'den) → Statik %75 eşiği kaldırıldı
@@ -110,8 +111,9 @@ _calib_meta    : Dict[str, Any]                 = {}
 _startup_time  : float                           = 0.0
 
 # Async ZK proof kuyruğu:
-#   maxsize=50 → En fazla 50 eş zamanlı kanıt üretimi.
-#   Kuyruk dolunca HTTP 429 döner. Sunucu başlatılırken lifespan'da oluşturulur.
+#   Kapasite _resolve_queue_capacity() ile çalışma anında belirlenir — sabit
+#   bir sayı DEĞİL. Kuyruk dolunca HTTP 429 döner. Sunucu başlatılırken
+#   lifespan içinde oluşturulur.
 _ZK_PROOF_QUEUE: Optional[asyncio.Queue] = None
 
 
@@ -171,7 +173,8 @@ async def lifespan(app: FastAPI):
 
     # ── Async ZK kanıt kuyruğu oluştur ───────────────────────────────────────
     # asyncio.Queue, asyncio döngüsünün içinde oluşturulmalıdır.
-    # maxsize=50: eş zamanlı 50 istek sınırı. Aşılırsa HTTP 429 döner.
+    # Kapasite makineden türetilir; aşılırsa HTTP 429 döner. Gerekçe metni
+    # /api/health üzerinden yayınlanır, böylece sayı denetlenebilir kalır.
     _kapasite, _gerekce = _resolve_queue_capacity()
     _ZK_PROOF_QUEUE = asyncio.Queue(maxsize=_kapasite)
     logger.info("ZK kuyruk kapasitesi gerekçesi: %s", _gerekce)
@@ -652,7 +655,7 @@ async def _invoke_zk_prover_with_queue_guard(
     asyncio.Queue bir semafor olarak kullanılır:
       • put_nowait() → kuyruğa bir "token" ekler (slot rezervasyonu)
       • get()        → token tüketilir (prover tamamlandığında)
-    Kuyruk maxsize=50 ile dolu olduğunda put_nowait() QueueFull fırlatır.
+    Kuyruk kapasitesine ulaştığında put_nowait() QueueFull fırlatır.
     Bu durum HTTP 429'a dönüştürülür.
 
     Saldırgan 50'den fazla eş zamanlı panik-modu isteği gönderirse:
@@ -803,7 +806,7 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
     1. SlidingWindowThresholdCalibrator güncellenir → τ(t) hesaplanır (statik %75 değil)
     2. ONNX IsolationForest → kalibre edilmiş Z-skoru risk yüzdesi
     3. risk ≥ τ(t): asyncio kuyruğuna girer → Rust binary async spawn
-       • Kuyruk doluysa (>50 eş zamanlı): HTTP 429 "Cryptographic Proof Queue Saturated"
+       • Kuyruk doluysa: HTTP 429 "Cryptographic Proof Queue Saturated"
     4. proof_payload.json → EVM sınır koşulları + kanıt boyutu + rho_prime_hex
     5. Genişletilmiş JSON yanıtı (dört UI sekmesini besler)
     """

@@ -154,7 +154,8 @@ Derleme bitince **Runtime logs**'ta şunları görmelisiniz:
 ✅ ONNX InferenceSession yüklendi: q_adaptive_guardian.onnx
 ✅ Kalibrasyon yüklendi — mean_d=..., std_d=...
 ✅ ZK prover binary doğrulandı: .../q-adaptive-zk
-✅ Async ZK kanıt kuyruğu oluşturuldu (maxsize=50)
+ZK kuyruk kapasitesi gerekçesi: 20 çekirdek ; 6.8 GB / 0.5 GB-per-proof = 13 -> min = 13 -> clamp[1,64] = 13
+✅ Async ZK kanıt kuyruğu oluşturuldu (maxsize=13)
 ✅ Sunucu isteklere hazır.
 ```
 

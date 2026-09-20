@@ -32,7 +32,7 @@ tahmin değildir. Çalıştırılamamış olanlar **§7'de ayrıca listelenmişt
 | Solidity | `cd Q-Adaptive-Contracts && forge test` | **105 geçti, 4 atlandı** (önce 0) |
 | Katman eşitliği | `python3 Q-Adaptive-AI/test_layer_parity.py` | **9 geçti** (önce yoktu) |
 | Attestation kriptosu | `python3 Q-Adaptive-AI/test_attestation.py` | **18 geçti** (önce yoktu) |
-| **Toplam otomatik test** | | **187 geçti** |
+| **Toplam otomatik test** | | **216 geçti** |
 | ONNX ↔ sklearn parity | `cd Q-Adaptive-AI && python3 test_onnx_inference.py` | 3 senaryo, çıkış kodu 0 |
 
 Solidity testlerinin **10'u fuzz/değişmez** testidir; her biri 512 koşu yapar.
@@ -43,9 +43,9 @@ Solidity testlerinin **10'u fuzz/değişmez** testidir; her biri 512 koşu yapar
 
 | Sözleşme | Satır | Dal | Fonksiyon |
 |---|---|---|---|
-| `QAdaptivePaymaster` | **%100,00** (94/94) | %96,77 (30/31) | %100,00 (15/15) |
-| `QAdaptiveAccount` | %92,05 (162/176) | %79,37 (50/63) | %95,65 (22/23) |
-| **Toplam** | %93,58 | %83,67 | %93,62 |
+| `QAdaptivePaymaster` | **%100,00** (104/104) | %97,14 (34/35) | %100,00 (17/17) |
+| `QAdaptiveAccount` | %94,15 (177/188) | %80,28 (57/71) | %96,00 (24/25) |
+| **Toplam** | %94,97 (302/318) | %84,55 (93/110) | %94,12 (48/51) |
 
 **Dal kapsamı %100 DEĞİLDİR ve öyle olduğu iddia edilmemektedir.** Kapsanmayan
 dalların çoğu guardian imza kurtarma yolundaki savunma kollarıdır (bozuk `v`,
@@ -65,7 +65,7 @@ sonsuzdaki nokta) — geçersiz eğri noktaları üretmeden ulaşılması zor.
 | 5 | **Paymaster boşaltılabilir** — gönderene bakmıyordu. **Gerçek fon kaybı açığı.** | `QAdaptivePaymaster.sol` — 4 kapı | `test_BULGU5_saldirgan_sozlesmesi_sponsorluk_alamiyor` + 6 test + 2 fuzz |
 | 6 | **Risk skoru kullanıcıdan okunuyordu** — imza alanından çözülüyordu | `QAdaptiveAccount.sol::_resolveRiskScore` — oracle / guardian / ikisinin büyüğü | `test_BULGU6_iddia_edilen_sifir_risk_ai_kapisini_gecemiyor` + 5 test + 2 fuzz |
 | 7 | **DefaultHasher (SipHash)** — kriptografik olmayan hash | `hashing.rs` (yeni) — BLAKE3 + SHAKE-128 + rejection sampling | `hashing::tests::cig_etkisi_tek_bit` (56/56 hücre), `ornekleme_makul_duzgun` |
-| 8 | **Solidity tarafında hiç test yok** | `foundry.toml` + 6 test dosyası | **109 test** (105 geçen, 4 atlanan) |
+| 8 | **Solidity tarafında hiç test yok** | `foundry.toml` + 6 test dosyası | **121 test** (117 geçen, 4 atlanan) |
 | 9 | **README ↔ kod tutarsızlıkları** — 96↔80 bit, Goldilocks↔f128, 16↔3 özellik | `air.rs::STARK_SECURITY_BITS` tek kaynak · README yeniden yazıldı | `SecurityBitsConsistencyTest` — **README'yi okur** |
 | 10 | **`ntt.rs` yok** | Gerekmez oldu: tam polinom NTT `fips204` içinde | `pqc::tests::standart_boyutlari_uyusuyor` |
 | 11 | **Kanıt tohumu belirlenimsiz** — `process::id()` karıştırılıyordu | `hashing.rs::derive_rho_prime` — `process::id()` **silindi** | `hashing::tests::rho_prime_tam_deterministik` · `DeterminismParityTest` |
@@ -198,10 +198,64 @@ gömülü.
 
 ---
 
+## 5c. Belgeler — aynı hatanın dördüncü görünümü
+
+Bu denetimin başlangıç bulgusu şuydu: *belgeler "ML-DSA kullanıyoruz" diyordu
+ama kodda tek satır yoktu.* Kod düzeltildikten sonra `docs/` yeniden okundu ve
+**aynı hatanın dördüncü örneği** çıktı — bu kez ters yönde.
+
+`docs/` altındaki üç belge, kaynak dosyaların tamamını alıntılıyordu:
+`Q_ADAPTIVE_Master_Report_TR.md` §3.1–§6.1, `presentation_blueprint_guide.md`
+slayt 25–43 ve `integration_test_report.md` §1.1–§1.3. Toplam **19 kod bloğu,
+~3.150 satır.** Bölüm başlıkları "Kod İncelemesi: `trace.rs`" diyor ve şimdiki
+zaman kullanıyordu — yani okuyan kişi şu anki kodu gördüğünü sanıyordu.
+
+Alıntılar donmuştu. `DefaultHasher` koddan tamamen silindikten sonra bile
+belgelerde **21 yerde** duruyordu. Uydurma `4608` calldata tabanı 9 yerde,
+uydurma `3.85 KB` kanıt boyutu 3 yerde kalmıştı.
+
+**Bunu elle düzeltmek sorunu çözmez, yalnızca erteler.** Kaynak bir sonraki
+değişiklikte yine kayardı ve kimse fark etmezdi. Bu yüzden bloklar artık elle
+yazılmıyor:
+
+```bash
+python3 docs/kod_bloklari_senkron.py          # blokları kaynaktan üret
+python3 docs/kod_bloklari_senkron.py --check  # CI kapısı: kayma varsa çıkış 1
+```
+
+Her blok, belgeye gömülü görünmez bir çapayla kaynağına bağlı:
+
+```
+<!-- KOD-SENK kaynak=Q-Adaptive-ZK/src/trace.rs parca=1/2 ic-baslik=evet -->
+<!-- KOD-SENK kaynak=Q-Adaptive-ZK/src/hashing.rs sembol=expand_matrix_a ic-baslik=evet -->
+```
+
+`--check` adımı CI'ın `regression-guards` işine bağlandı. Kaynak değişip belge
+güncellenmezse **yapı kırılır**.
+
+### Aynı taramada çıkan iki gerçek hata
+
+Blokları üretilebilir yapmak, gözden kaçan iki şeyi de ortaya çıkardı:
+
+| Bulgu | Neydi |
+|---|---|
+| `main.rs` doküman yorumu bayattı | `generate_rho_prime_from_entropy` üstündeki yorum hâlâ "OS rastgele entropi (DefaultHasher simülasyonu)" diyor, ρ''yü "expand_matrix_a için simülasyon" olarak tanıtıyordu. Gövde doğruydu, açıklama yanlıştı — yani **kodun kendisi kendi hakkında yanlış iddiada bulunuyordu**. Gerçek davranışa göre yeniden yazıldı. |
+| §7.3.1 tablosu tamamen uydurmaydı | ONNX için `1.12 / 1.45 / 2.10 ms` medyan-p95-p99 veriyordu. **Yüzdelik hiç toplanmadı.** Karşılaştırma tabanı olarak verilen "PyTorch Taban Çizgisi" satırı ise **hiç çalıştırılmadı**. Tablo kaldırıldı; ölçülen tek değer (8,8–10,1 ms, 5 koşu) bırakıldı ve neyin ölçülmediği açıkça yazıldı. |
+
+Ayrıca §7.3.3'teki sıkıştırma şeması kendi kendisiyle çelişiyordu: `7.18 KB`'den
+`3.85 KB`'ye inişi "%97,98 tasarruf" diye sunuyordu — oysa o iki sayının oranı
+%46'dır. Gerçek %98'lik oran 50'lik partiden gelir, tek imzadan değil. Şema
+ölçülmüş değerlerle yeniden çizildi ve `beats_ecdsa = false` gerçeği
+(50 ECDSA imzası = 3.250 bayt, tek STARK kanıtından **küçük**) şemanın içine
+kondu.
+
+---
+
 ## 6. Regresyon korumaları
 
-CI'da beş grep tabanlı koruma var (`regression-guards` işi). Düzeltilen bir
-hata sessizce geri gelirse yapı kırılır:
+CI'da beş grep tabanlı koruma ve bir belge-senkron kapısı var
+(`regression-guards` işi). Düzeltilen bir hata sessizce geri gelirse yapı
+kırılır:
 
 | Koruma | Ne arar |
 |---|---|
@@ -289,7 +343,7 @@ RPC yapılandırılmazsa test `[SKIP]` raporlar — asla sahte bir `[PASS]`
 | **Determinizm** | "Aynı girdi birebir aynı ρ', anahtar ve imzayı veriyor. Jüri koşuyu kendi makinesinde tekrarlayabilir." | — |
 | **Paymaster** | "Dört bağımsız kapı. Sömürü senaryosunun kendisi bir test olarak duruyor. Satır kapsamı %100." | "Bağımsız denetimden geçti." |
 | **Risk kaynağı** | "Skor oracle'dan veya guardian imzasından geliyor; gönderenin yazdığı alan karara girmiyor. Python'un ürettiği imza gerçek sözleşmede doğrulanıyor." | — |
-| **Solidity testleri** | "109 test, 10'u fuzz. Ölçülen kapsam: satır %92–100, dal %79–97." | "Kapsam %100." |
+| **Solidity testleri** | "121 test, 10'u fuzz. Ölçülen kapsam: satır %94–100, dal %80–97." | "Kapsam %100." |
 | **STARK** | "Prototip temkinli **80-bit** ayarında ve bu sayı tek bir sabitten geliyor; README'yi okuyan bir test hizayı koruyor." | "96-bit." · "STARK, ML-DSA doğrulamasını devre içinde ispatlıyor." |
 | **Calldata** | "50 işlemlik partide bir kanıt, işlem başına ML-DSA imzası taşımaya kıyasla ~%98,2 tasarruf. Tanım payload'un içinde." | "ECDSA'dan daha az calldata." (50 ECDSA imzası = 3.250 B, **bir STARK kanıtından küçük**) |
 | **Canlı ağ** | "Ethereum mainnet fork'unda, `0x0000000071727De22E5E9d8BAf0edAc6f37da032` adresindeki gerçek EntryPoint v0.7 baytkoduna karşı doğrulandı — 4/4 test." | "Mainnet'e konuşlandırıldı." (fork testi ≠ konuşlandırma) |
@@ -316,10 +370,10 @@ RPC yapılandırılmazsa test `[SKIP]` raporlar — asla sahte bir `[PASS]`
 ## 10. Her iddiayı nasıl kontrol edersiniz
 
 ```bash
-# 1) Rust: 55 test
+# 1) Rust: 61 test
 cd Q-Adaptive-ZK && cargo test && cd ..
 
-# 2) Solidity: 109 test (fuzz dahil, 4'ü fork — atlanır)
+# 2) Solidity: 121 test (fuzz dahil, 4'ü fork — sır yoksa atlanır)
 cd Q-Adaptive-Contracts && forge build && forge test -vv && cd ..
 
 # 3) Solidity kapsamı
@@ -358,9 +412,9 @@ açık bir bulgu değil.
 
 | Öncelik | İş | Neden |
 |---|---|---|
-| 1 | `docs/` altındaki eski raporlarda 96-bit / 16-özellik kalıntılarını tara | README ve kod hizalı; eski PDF/`.md` raporlar hâlâ eski sayıları taşıyor. Jüri elindeki nüshayı okuyor. |
-| 2 | `QAdaptiveAccount` dal kapsamını %79,37'den yükselt | İmza kurtarma savunma kolları kapsanmıyor (bozuk `v`, sonsuzdaki nokta). |
+| 1 | `docs/` altındaki `.pdf` nüshaları yeniden üret | `.md` kaynakları düzeltildi (bkz. §5c) ama aynı klasördeki PDF'ler eski metinden basılmış. Jüri elindeki nüshayı okuyor. |
+| 2 | `QAdaptiveAccount` dal kapsamını %80,28'den yükselt | İmza kurtarma savunma kolları kapsanmıyor (bozuk `v`, sonsuzdaki nokta). |
 | 3 | Guardian anahtarını HSM/KMS'e taşı | `attestation.py` anahtarı bellekte tutuyor ve sabit-zamanlı değil — üretim için uygun değil. Sınır dosyanın başında yazılı. |
-| 4 | `gas-custom-errors`: `require` string'lerinden custom error'a geç | Gaz tasarrufu; 109 test revert mesajlarını string bekliyor, birlikte güncellenmeli. Açık teknik borç. |
+| 4 | `gas-custom-errors`: `require` string'lerinden custom error'a geç | Gaz tasarrufu; 121 test revert mesajlarını string bekliyor, birlikte güncellenmeli. Açık teknik borç. |
 | 5 | Sunum kapak slaytlarındaki yer tutucu soyadları düzelt | Denetim §10. |
 | 6 | `ETH_RPC_URL` sırrını depoya ekle | Fork testleri CI'da da gerçeğe karşı koşar. Zorunlu değil — sır yoksa `[SKIP]` raporluyorlar. |

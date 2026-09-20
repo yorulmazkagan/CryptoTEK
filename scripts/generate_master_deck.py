@@ -7,8 +7,17 @@ from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
 
-TEMPLATE_PATH = '/home/yorulmazkagan/Masaüstü/Bloq/Proje/2026-Blokzincir_Yarışması_TR_TBTK_nfAof.pptx'
-OUTPUT_PATH = '/home/yorulmazkagan/Masaüstü/Bloq/Proje/Q_ADAPTIVE_Master_Deck_140.pptx'
+# Yollar depo köküne göre çözülür. Önceki sürüm mutlak yollar kullanıyordu
+# ('/home/<kullanici>/Masaustu/Bloq/Proje/...'); depo taşındığında betik hiç
+# çalışmaz hâle gelmişti — yani jüri sunumu yeniden üretilemiyordu.
+PROJE_KOK = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+TEMPLATE_PATH = os.path.join(
+    PROJE_KOK, 'docs', 'assets', '2026-Blokzincir_Yarışması_TR_TBTK_nfAof.pptx'
+)
+OUTPUT_PATH = os.path.join(
+    PROJE_KOK, 'docs', 'assets', 'Q_ADAPTIVE_Master_Deck_140.pptx'
+)
 
 # Colors
 CYAN = RGBColor(0, 212, 255)
@@ -23,7 +32,7 @@ ORANGE_DARK = RGBColor(45, 25, 15)
 
 # Credentials
 TAKIM_ADI = "CryptoTEK"
-TAKIM_ID = "369042"
+TAKIM_ID = "909630"
 BASVURU_ID = "2603893"
 
 def read_code_lines(filename, start, end=None):
@@ -542,7 +551,10 @@ def main():
         ]),
         ("Ağ Geçidi ve Orantısız Gas Saldırısı (DoS) Koruması", [
             "Yapay zeka çıkarımları ve ZK-STARK ispat üretimleri yüksek işlemci (CPU) gücü gerektirdiğinden, sisteme DoS saldırıları düzenlenebilir.",
-            "FastAPI geçidine entegre edilen asyncio.Queue(maxsize=50) hız sınırlayıcı kuyruğu, işlemci kaynaklarının tükenmesini mutlak surette engeller.",
+            "FastAPI geçidine entegre edilen asyncio.Queue hız sınırlayıcı kuyruğu işlemci "
+            "kaynaklarının tükenmesini engeller. Kuyruk kapasitesi sabit bir sayı DEĞİLDİR: "
+            "makinenin çekirdek sayısı ve boş belleğinden türetilir. Sabit 50 değeri, 2 "
+            "çekirdekli bir sunucuda korumayı işlevsiz bırakıyordu.",
             "Kuyruk doluluk oranını aşan istekler, zincir dışı işlemciyi kilitlemeden HTTP 429 'Cryptographic Proof Queue Saturated' hatasıyla reddedilir."
         ]),
         ("Otonom Güvenlik Reaksiyon Döngüsü", [
@@ -678,14 +690,27 @@ def main():
             ]
             add_table(slide, "Mevcut Cüzdan Güvenlik Çözümlerinin Karşılaştırmalı Matrisi", headers, rows)
         elif s_idx == 15: # Table
-            headers = ["İmza Şeması", "İmza Boyutu (Byte)", "Doğrulama Gaz Maliyeti (EVM)", "Kuantum Direnci (NIST)"]
+            headers = ["İmza Şeması", "İmza Boyutu (Byte)", "Zincir Üstü Doğrulama Gazı", "Kuantum Direnci (NIST)"]
+            # FIPS 204 imza boyutları ölçülmüş değerlerdir (pqc.rs; payload
+            # içindeki signature_bytes alanı). Gaz sütunu KASITLI olarak
+            # "uygulanmadı" der: bu projede ML-DSA doğrulaması zincir üstünde
+            # HİÇ yapılmıyor — mimarinin bütün amacı bundan kaçınmak. Buraya
+            # tahmini bir gaz sayısı yazmak, yapmadığımız bir işi yapmış gibi
+            # göstermek olurdu.
             rows = [
-                ["ECDSA (secp256k1)", "65 Byte", "3,000 Gas", "0 (Kırık)"],
-                ["Dilithium-2", "2,420 Byte", "1,200,000 Gas", "Kategori 2"],
-                ["Dilithium-5 (ML-DSA-87)", "4,595 Byte", "2,850,000 Gas", "Kategori 5 (En Yüksek)"],
-                ["Q-ADAPTIVE STARK", "820 Byte (JSON)", "120,000 Gas (Sıkıştırılmış)", "Kategori 5 (STARK Zırhlı)"]
+                ["ECDSA (secp256k1)", "65 Byte", "~3,000 Gas (ecrecover ön-derlemesi)", "Yok — Shor ile kırılır"],
+                ["ML-DSA-44", "2,420 Byte", "uygulanmadı", "Kategori 2"],
+                ["ML-DSA-65", "3,309 Byte", "uygulanmadı", "Kategori 3"],
+                ["ML-DSA-87", "4,627 Byte", "uygulanmadı", "Kategori 5 (En Yüksek)"],
+                ["Q-ADAPTIVE (attestation)", "65 Byte imza + 32 Byte özet", "ölçüldü: validateUserOp 26k–148k gaz", "ML-DSA zincir DIŞINDA"]
             ]
-            add_table(slide, "İmza Doğrulama Maliyetleri ve Calldata Boyut Analizleri", headers, rows)
+            add_table(
+                slide,
+                "İmza Boyutları ve Zincir Üstü Doğrulama Maliyeti "
+                "(gaz: forge test --gas-report ölçümü)",
+                headers,
+                rows,
+            )
         elif s_idx == 17:
             add_academic_text(slide, "", bullets[:3])
             add_prompt_box(slide, "An abstract, hyper-clean laboratory light-themed diagram showing Shor's algorithm breaking ECDSA elliptic curves, glowing cyan lines, minimal geometric vectors --ar 16:9")
@@ -741,7 +766,7 @@ def main():
             part = slide_num - 48
             start_lines = [1, 120, 240, 360, 480, 600]
             end_lines = [119, 239, 359, 479, 599, None]
-            code_slice = read_code_lines('/home/yorulmazkagan/Masaüstü/Bloq/Proje/Q-Adaptive-AI/src/model.py', start_lines[part], end_lines[part])
+            code_slice = read_code_lines(os.path.join(PROJE_KOK, 'Q-Adaptive-AI/src/model.py'), start_lines[part], end_lines[part])
             update_slide_title(slide, f"SORUN TANITIMI - 2: model.py Kaynak Kod Kesiti - Bölüm {part+1}", "TextBox 8")
             bullets = [
                 "model.py dosyası, yapay zeka modelinin ve SlidingWindowThresholdCalibrator sınıfının yer aldığı çekirdek kod tabanıdır.",
@@ -754,11 +779,12 @@ def main():
             part = slide_num - 54
             start_lines = [1, 200, 400, 600]
             end_lines = [199, 399, 599, None]
-            code_slice = read_code_lines('/home/yorulmazkagan/Masaüstü/Bloq/Proje/Q-Adaptive-AI/src/api.py', start_lines[part], end_lines[part])
+            code_slice = read_code_lines(os.path.join(PROJE_KOK, 'Q-Adaptive-AI/src/api.py'), start_lines[part], end_lines[part])
             update_slide_title(slide, f"SORUN TANITIMI - 2: api.py Kaynak Kod Kesiti - Bölüm {part+1}", "TextBox 8")
             bullets = [
                 "api.py, FastAPI ağ geçidini ve DoS korumasını sağlayan asenkron kuyruk yapısını barındırmaktadır.",
-                "asyncio.Queue(maxsize=50) yapısıyla CPU tıkanmasını engellemek üzere tasarlanmıştır.",
+                "asyncio.Queue yapısıyla CPU tıkanmasını engellemek üzere tasarlanmıştır; "
+                "kuyruk kapasitesi makinenin çekirdek ve bellek miktarından türetilir.",
                 "Rust Winterfell ZK-STARK ispat motorunu alt süreç (subprocess) olarak asenkron şekilde çağırır ve yönetir."
             ]
             add_split_layout(slide, f"api.py: Bölüm {part+1} (Satır {start_lines[part]}-{end_lines[part] if end_lines[part] else 'Son'})", bullets, code_slice, is_code=True, right_title="src/api.py")
@@ -773,7 +799,7 @@ def main():
             add_dashboard_screenshot(
                 slide, 
                 "Canlı Telemetri Dashboard Paneli Analizi",
-                '/home/yorulmazkagan/Masaüstü/Bloq/Proje/stitch_q_adaptive_ai_guardian_dashboards/ai_guardian_canl_telemetri_paneli_t_rk_e/screen.png',
+                os.path.join(PROJE_KOK, 'stitch_q_adaptive_ai_guardian_dashboards/ai_guardian_canl_telemetri_paneli_t_rk_e/screen.png'),
                 bullets,
                 "Şekil: Canlı Telemetri Paneli - Yapay zeka anomali tespiti ve dinamik varyans kalibrasyonu canlı grafik veri akışı."
             )
@@ -788,7 +814,7 @@ def main():
             add_dashboard_screenshot(
                 slide,
                 "Simülasyon Enjektör Paneli Analizi",
-                '/home/yorulmazkagan/Masaüstü/Bloq/Proje/stitch_q_adaptive_ai_guardian_dashboards/sim_lasyon_enjekt_r_paneli_t_rk_e/screen.png',
+                os.path.join(PROJE_KOK, 'stitch_q_adaptive_ai_guardian_dashboards/sim_lasyon_enjekt_r_paneli_t_rk_e/screen.png'),
                 bullets,
                 "Şekil: Simülasyon Enjektörü - Yapay zeka anomali tespit motorunun stres testi ve anomali enjeksiyon simülasyonu kontrol paneli."
             )
@@ -818,9 +844,12 @@ def main():
         elif slide_num == 62:
             update_slide_title(slide, "SORUN TANITIMI - 2: API Hız Sınırlayıcı Performansı ve DoS Önleme Gücü", "TextBox 8")
             bullets = [
-                "Sisteme saniyede 150 ZK-STARK ispat talebi gönderilerek yapılan stres testlerinde hız sınırlayıcının performansı ölçülmüştür.",
-                "FastAPI asyncio kuyruğu (maxsize=50), 50. işlemden sonra gelen tüm istekleri doğrudan bloke etmiştir.",
-                "Kuyrukta bekleyen işlemler işlendikçe yeni istekler kabul edilmiş, CPU yükü %85 seviyesinde sabit tutulmuştur.",
+                "Hız sınırlayıcının davranışı birim testleriyle doğrulanmıştır: kuyruk dolduğunda "
+                "HTTP 429 döner ve kuyruk boşaldıkça yeni istekler kabul edilir.",
+                "Kuyruk kapasitesi sabit bir sayı DEĞİLDİR; _resolve_queue_capacity() bunu "
+                "makinenin çekirdek sayısı ve boş belleğinden türetir.",
+                "Yük altında verim (istek/sn) ve CPU doluluk oranı ÖLÇÜLMEDİ; bu yüzden burada "
+                "bir sayı verilmiyor.",
                 "Böylelikle CPU tükenmesi engellenmiş ve ağ geçidinin çökmesi mutlak surette engellenmiştir."
             ]
             add_academic_text(slide, "", bullets)
@@ -898,7 +927,7 @@ def main():
             part = slide_num - 68
             start_lines = [1, 200, 400]
             end_lines = [199, 399, None]
-            code_slice = read_code_lines('/home/yorulmazkagan/Masaüstü/Bloq/Proje/Q-Adaptive-ZK/src/trace.rs', start_lines[part], end_lines[part])
+            code_slice = read_code_lines(os.path.join(PROJE_KOK, 'Q-Adaptive-ZK/src/trace.rs'), start_lines[part], end_lines[part])
             update_slide_title(slide, f"SORUN TANITIMI - 3: trace.rs Kaynak Kod Kesiti - Bölüm {part+1}", "TextBox 8")
             bullets = [
                 "trace.rs dosyası, Rust Winterfell motoru için yürütme izini (execution trace) oluşturan ana modüldür.",
@@ -911,7 +940,7 @@ def main():
             part = slide_num - 71
             start_lines = [1, 120, 240]
             end_lines = [119, 239, None]
-            code_slice = read_code_lines('/home/yorulmazkagan/Masaüstü/Bloq/Proje/Q-Adaptive-ZK/src/air.rs', start_lines[part], end_lines[part])
+            code_slice = read_code_lines(os.path.join(PROJE_KOK, 'Q-Adaptive-ZK/src/air.rs'), start_lines[part], end_lines[part])
             update_slide_title(slide, f"SORUN TANITIMI - 3: air.rs Kaynak Kod Kesiti - Bölüm {part+1}", "TextBox 8")
             bullets = [
                 "air.rs (Algebraic Intermediate Representation) dosyası, ZK-STARK cebirsel kısıtlarını tanımlar.",
@@ -924,7 +953,7 @@ def main():
             part = slide_num - 74
             start_lines = [1, 250, 500]
             end_lines = [249, 499, None]
-            code_slice = read_code_lines('/home/yorulmazkagan/Masaüstü/Bloq/Proje/Q-Adaptive-ZK/src/main.rs', start_lines[part], end_lines[part])
+            code_slice = read_code_lines(os.path.join(PROJE_KOK, 'Q-Adaptive-ZK/src/main.rs'), start_lines[part], end_lines[part])
             update_slide_title(slide, f"SORUN TANITIMI - 3: main.rs Kaynak Kod Kesiti - Bölüm {part+1}", "TextBox 8")
             bullets = [
                 "main.rs, Winterfell Rust ZK-STARK kanıtlayıcısının (prover) giriş noktası ve yürütücüsüdür.",
@@ -935,7 +964,7 @@ def main():
             
         elif slide_num == 77:
             update_slide_title(slide, "SORUN TANITIMI - 3: bridge.rs Kaynak Kod Kesiti", "TextBox 8")
-            code_slice = read_code_lines('/home/yorulmazkagan/Masaüstü/Bloq/Proje/Q-Adaptive-ZK/src/bridge.rs', 1, None)
+            code_slice = read_code_lines(os.path.join(PROJE_KOK, 'Q-Adaptive-ZK/src/bridge.rs'), 1, None)
             bullets = [
                 "bridge.rs dosyası, üretilen ZK-STARK ispat verilerini JSON formatına serialize ederek dış API'ye aktarmayı sağlar.",
                 "Kanıt verisi (proof bytes) ve sınır koşulları parametreleri bu köprü aracılığıyla paketlenir.",
@@ -953,7 +982,7 @@ def main():
             add_dashboard_screenshot(
                 slide,
                 "ZK-STARK Kriptografik Mantık Paneli Analizi",
-                '/home/yorulmazkagan/Masaüstü/Bloq/Proje/stitch_q_adaptive_ai_guardian_dashboards/zk_stark_kriptografik_mant_k_paneli_t_rk_e/screen.png',
+                os.path.join(PROJE_KOK, 'stitch_q_adaptive_ai_guardian_dashboards/zk_stark_kriptografik_mant_k_paneli_t_rk_e/screen.png'),
                 bullets,
                 "Şekil: ZK-STARK Paneli - Kriptografik ispat üretimi, trace matrisi boyutu ve NTT polinomsal doğrulama süreleri telemetrisi."
             )
@@ -1005,7 +1034,7 @@ def main():
             part = slide_num - 83
             start_lines = [1, 200, 400]
             end_lines = [199, 399, None]
-            code_slice = read_code_lines('/home/yorulmazkagan/Masaüstü/Bloq/Proje/Q-Adaptive-Contracts/contracts/QAdaptiveAccount.sol', start_lines[part], end_lines[part])
+            code_slice = read_code_lines(os.path.join(PROJE_KOK, 'Q-Adaptive-Contracts/contracts/QAdaptiveAccount.sol'), start_lines[part], end_lines[part])
             update_slide_title(slide, f"SORUN TANITIMI - 3: QAdaptiveAccount.sol Kaynak Kod Kesiti - Bölüm {part+1}", "TextBox 8")
             bullets = [
                 "QAdaptiveAccount.sol, ERC-4337 standardına uygun olarak geliştirilen akıllı cüzdan kontratıdır.",
@@ -1172,19 +1201,23 @@ def main():
         bullets = [
             f"Q-ADAPTIVE sistem entegrasyonu doğrulama testlerinde elde edilen {title} verileri, projenin başarısını kesin olarak ortaya koymaktadır.",
             "Tüm test senaryoları (Test Case 1-12) başarıyla doğrulanmış ve entegrasyon test raporunda kayıt altına alınmıştır.",
-            "Yapay zeka çıkarım süresi 1.12ms, ZK-STARK kanıt üretim süresi ise 18.52ms olarak ölçülmüştür; bu değerler cüzdan performansı için mükemmeldir.",
-            "EVM akıllı cüzdandaki imza doğrulama gaz tüketimi, calldata sıkıştırması sayesinde %97.98 oranında optimize edilmiştir."
+            "Yapay zeka çıkarım süresi bu makinede ortalama 8,8-10,1 ms; ZK-STARK kanıt üretimi "
+            "kademeye göre 0,4-21 ms aralığında ölçülmüştür. Değerler donanıma bağlıdır ve her "
+            "koşuda yeniden ölçülüp arayüze yazılır.",
+            "Calldata tasarrufu 50 islemlik bir partide %96,6-98,4 arasindadir. Bu oran ML-DSA "
+            "imzasi tasimaya kiyasladir; ECDSA'ya kiyasla DEGILDIR - 50 ECDSA imzasi 3.250 bayttir "
+            "ve tek bir STARK kanitindan kucuktur."
         ]
         
         if s_idx == 0:
             headers = ["Metrik Adı", "Ölçülen Değer", "Hedeflenen Limit", "Durum"]
             rows = [
-                ["AI Çıkarım Süresi", "1.12 ms", "< 10.0 ms", "Başarılı"],
-                ["ZK-STARK İspat Süresi", "18.52 ms", "< 100.0 ms", "Başarılı"],
-                ["Calldata Sıkıştırma Oranı", "97.98 %", "> 90.00 %", "Başarılı"],
-                ["Solidity Gaz Tüketimi (Normal)", "120,000 Gas", "< 200,000 Gas", "Başarılı"],
-                ["Entegrasyon Test Başarısı", "12 / 12 Test Geçti", "12 / 12 Test", "Başarılı"],
-                ["DoS Koruma Oranı", "100.00 %", "100.00 %", "Başarılı"]
+                ["AI Çıkarım Süresi", "8,8-10,1 ms (5 koşu)", "< 10,0 ms", "Sınırda - donanıma bağlı"],
+                ["ZK-STARK İspat Süresi", "0,4-21 ms (kademeye göre)", "< 100,0 ms", "Başarılı"],
+                ["Calldata Tasarrufu (50'lik parti)", "%96,6-98,4", "> %90,0", "Başarılı"],
+                ["validateUserOp Gazı", "26k-148k (medyan 74k)", "< 200,000 Gas", "Başarılı"],
+                ["Otomatik Test", "216 / 216 Geçti", "216 Test", "Başarılı"],
+                ["Solidity Dal Kapsamı", "%84,55 (93/110)", "ölçülür", "%100 DEĞİL - açıkça bildiriliyor"]
             ]
             add_table(slide, "Sistem Başarı ve Performans Metrikleri Özeti", headers, rows)
         elif s_idx == 5:
@@ -1204,7 +1237,7 @@ def main():
             add_dashboard_screenshot(
                 slide,
                 "Zincir İçi İzleyici ve Akıllı Cüzdan İzleme Paneli",
-                '/home/yorulmazkagan/Masaüstü/Bloq/Proje/stitch_q_adaptive_ai_guardian_dashboards/on_chain_durum_i_zleyicisi_t_rk_e/screen.png',
+                os.path.join(PROJE_KOK, 'stitch_q_adaptive_ai_guardian_dashboards/on_chain_durum_i_zleyicisi_t_rk_e/screen.png'),
                 bullets,
                 "Şekil: Zincir İçi İzleyici - Akıllı cüzdanın işlem geçmişi, durum değişiklikleri ve otonom reaksiyon günlükleri."
             )

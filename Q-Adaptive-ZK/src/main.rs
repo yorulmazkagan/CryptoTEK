@@ -64,26 +64,35 @@ const THIN_SEP: &str = "--------------------------------------------------------
 /// AI Guardian risk skoru ve zaman damgasından kriptografik olarak güvenli
 /// 32-byte ρ' (rho-prime) seed'i üretir.
 ///
-/// Üretim Prosedürü:
-///   1. Mevcut zaman damgasını al: timestamp_ns (nanosaniye)
-///   2. ai_risk_score'u f64 bitlerinden al: risk_bits
-///   3. OS rastgele entropi: os_entropy[] (platform DefaultHasher entropisi simülasyonu)
-///   4. BLAKE3 hash: H(timestamp_ns || risk_bits || os_entropy) → 32 bayt
+/// Üretim Prosedürü (`hashing::derive_rho_prime`):
+///   BLAKE3( ALAN_ETIKETI ‖ risk_bits ‖ epoch_ns ‖ len(user_op_hash) ‖
+///           user_op_hash ‖ entropi_bayragi [‖ taze_entropi] ) → 32 bayt
 ///
-///   Not: Gerçek üretimde `getrandom` veya `rand::rngs::OsRng` kullanılır.
-///   Bu simülasyon, dış bağımlılık olmadan maksimum entropi sağlar.
+///   Alan etiketi, aynı hash'in başka amaçlarla üretilen özetleriyle
+///   çakışmayı önler. `user_op_hash` uzunluk ön-ekiyle yazılır ki
+///   ("ab" ‖ "") ile ("a" ‖ "b") aynı özete gitmesin.
+///
+/// Determinizm — bu fonksiyon TAZE ENTROPİ KARIŞTIRMAZ:
+///   `user_op_hash` boş, `extra_entropy` `None` olarak geçilir; entropi
+///   bayrağı `0`'dır. Aynı (risk, epoch_ns) çifti her zaman aynı ρ''yü verir.
+///   Bu bilinçli: jüri aynı girdiyle aynı kanıtı yeniden üretebilmeli.
+///   Eski uygulama `process::id()` karıştırdığı için bu mümkün değildi.
+///   Taze entropi isteyen `--fresh-entropy` ile AÇIKÇA verir ve bu durum
+///   payload'da `deterministic_run = false` olarak işaretlenir.
 ///
 /// Güvenlik Garantileri:
 ///   • ai_risk_score değişirse → seed tamamen farklı (risk seviyesi bağlantısı)
-///   • timestamp_ns her çağrıda farklı → tekrar saldırısı imkansız
-///   • Hash çıktısı 256-bit → brute force mümkün değil
-///   • Her rotasyon olayı benzersiz seed üretir
+///   • epoch_ns çağıran tarafından verilir → tekrar koruması ÇAĞIRANIN işi,
+///     bu fonksiyonun değil (bkz. yukarıdaki determinizm notu)
+///   • BLAKE3 çıktısı 256-bit → ön-görüntü araması pratik değil
 ///
-/// liboqs::sig::Sig::keypair_from_seed Analogisi:
-///   Bu fonksiyonun çıktısı, liboqs'ta `keypair_from_seed(rho_prime)` çağrısına
-///   karşılık gelir. Tam polinom ML-DSA'da bu seed, ExpandA() ve ExpandS()
-///   ile tam anahtar çiftini deterministik olarak üretir. Burada simülasyon
-///   olarak expand_matrix_a() ile A matrisini genişletmek için kullanılır.
+/// ρ' nereye gidiyor:
+///   1. `pqc::sign_and_verify` → ξ = BLAKE3(alan ‖ ρ') → `KG::keygen_from_seed(ξ)`.
+///      Bu GERÇEK bir ML-DSA anahtar üretimidir (`fips204` crate'i, FIPS 204);
+///      artık bir benzetim değil.
+///   2. `Dilithium5InjectionPayload::from_rho_prime` → STARK iz tablosunun
+///      kafes matrisi, SHAKE-128 + reddetme örneklemesiyle genişletilir
+///      (FIPS 204 §7.3 ExpandA ile aynı yordam).
 ///
 /// # Arguments
 /// * `ai_risk_score` - AI modülünden gelen risk yüzdesi (0.0 - 100.0).

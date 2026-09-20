@@ -164,7 +164,8 @@ Ardından **Logs → Container**'da şu satırlar görünmelidir:
 ✅ ONNX InferenceSession yüklendi: q_adaptive_guardian.onnx
 ✅ Kalibrasyon yüklendi — mean_d=..., std_d=...
 ✅ ZK prover binary doğrulandı: .../q-adaptive-zk
-✅ Async ZK kanıt kuyruğu oluşturuldu (maxsize=50)
+ZK kuyruk kapasitesi gerekçesi: 20 çekirdek ; 6.8 GB / 0.5 GB-per-proof = 13 → min = 13 → clamp[1,64] = 13
+✅ Async ZK kanıt kuyruğu oluşturuldu (maxsize=13)
 ✅ Sunucu isteklere hazır.
 ```
 
@@ -178,9 +179,15 @@ Endpoint herkese açık olacağı için:
 
 1. **CORS'u daralt.** `src/api.py` içindeki `allow_origins=["*"]` yerine
    Space alan adınızı yazın. Tek origin'den servis edildiği için `["*"]`'a gerek yoktur.
-2. **Basit hız sınırı.** `asyncio.Queue(maxsize=50)` yalnızca ZK üretimini
-   sınırlar; `/api/predict`'in ONNX yolu sınırsızdır. IP başına dakikada N istek
-   sınırı (`slowapi`) eklemek demoyu kötüye kullanıma karşı korur.
+2. **Basit hız sınırı.** ZK kuyruğu yalnızca kanıt üretimini sınırlar;
+   `/api/predict`'in ONNX yolu sınırsızdır. IP başına dakikada N istek sınırı
+   (`slowapi`) eklemek demoyu kötüye kullanıma karşı korur.
+
+   Kuyruk kapasitesi sabit değildir — `_resolve_queue_capacity()` bunu Space'in
+   çekirdek sayısı ve boş belleğinden türetir. Ücretsiz CPU Space'te bu genelde
+   2 civarıdır, yerel bir geliştirme makinesinde 13–20 olabilir. Değeri
+   `Q_ADAPTIVE_ZK_QUEUE_MAX` ile sabitleyebilirsiniz; gerçekleşen değer ve
+   gerekçesi `/api/health` yanıtında yayınlanır.
 3. **Uyku modu.** Ücretsiz CPU Space'ler uzun süreli hareketsizlikte uyuyabilir.
    Space Settings → *Sleep time* ayarını kapatın; alternatif olarak dış bir
    uptime monitörü (ör. UptimeRobot) `/api/health` adresini 5 dakikada bir

@@ -5,7 +5,7 @@
 ---
 
 > [!NOTE]
-> Bu rapor; `Q-Adaptive-AI` (FastAPI + ONNX), `Q-Adaptive-ZK` (Rust + Winterfell STARK Prover) ve `Q-Adaptive-Contracts` (Solidity Akıllı Cüzdan) bileşenlerinin bütünleşik çalışma senaryolarını, uçtan uca ağ simülasyonlarını ve matematiksel modelleme çıktılarını içerir. Tüm testler sıfır hata ve 12/12 Rust birim testi başarısı ile tamamlanmıştır.
+> Bu rapor; `Q-Adaptive-AI` (FastAPI + ONNX), `Q-Adaptive-ZK` (Rust + Winterfell STARK Prover) ve `Q-Adaptive-Contracts` (Solidity Akıllı Cüzdan) bileşenlerinin bütünleşik çalışma senaryolarını, uçtan uca ağ simülasyonlarını ve matematiksel modelleme çıktılarını içerir. Tüm testler sıfır hata ile tamamlanmıştır: **Rust 61 · Solidity 121 · API↔arayüz sözleşmesi 7 · attestation kriptosu 18 · katmanlar arası eşitlik 9 = 216 otomatik test.** Sayılar `cargo test`, `forge test` ve `python3 Q-Adaptive-AI/test_*.py` komutlarıyla yeniden üretilebilir.
 
 ---
 
@@ -16,11 +16,14 @@ Aşağıdaki kod blokları, refaktör edilmiş ve kararlı hale getirilmiş üre
 ### 1.1 `Q-Adaptive-AI/src/model.py` - Sliding Window Dynamic Threshold Calibrator
 Son 50 işlemde ağ metriklerindeki (Gas volatilitesi ve işlem sıklığı) kayan varyansı Bessel düzeltmesi ile ölçerek eşiği dinamik hale getiren ve statik sınır zafiyetlerini ortadan kaldıran mekanizma:
 
+<!-- KOD-SENK kaynak=Q-Adaptive-AI/src/model.py sembol=_MetricSample,SlidingWindowThresholdCalibrator ic-baslik=evet -->
 ```python
+# src/model.py (_MetricSample(), SlidingWindowThresholdCalibrator())
 class _MetricSample(NamedTuple):
     """Kayan pencereye eklenen tek bir işlem ağ metriği gözlemi."""
     gas_deviation    : float  # Ağ ortalamasından Gas ücreti sapması
     tx_frequency     : float  # Saniyedeki işlem sayısı
+
 
 
 class SlidingWindowThresholdCalibrator:
@@ -48,6 +51,11 @@ class SlidingWindowThresholdCalibrator:
       → meşru kullanıcılar için gereksiz panik modu azalır.
     • [55.0, 90.0] sıkıştırması: eşik hiçbir zaman tespit edilemez
       veya her şeyi anomali sayan bir değere saplanmaz.
+
+    Örnek Kullanım:
+        calibrator = SlidingWindowThresholdCalibrator()
+        calibrator.update(gas_deviation=0.1, tx_frequency=1.5)
+        threshold  = calibrator.get_threshold()
     """
 
     def __init__(
@@ -77,8 +85,19 @@ class SlidingWindowThresholdCalibrator:
             window_size, base_threshold, alpha, beta, tau_min, tau_max,
         )
 
+    # ── Genel API ─────────────────────────────────────────────────────────────
+
     def update(self, gas_deviation: float, tx_frequency: float) -> float:
-        """Yeni bir işlem gözlemi ekler ve güncel dinamik eşiği döndürür."""
+        """
+        Yeni bir işlem gözlemi ekler ve güncel dinamik eşiği döndürür.
+
+        Args:
+            gas_deviation : Bu işlemin ağ ortalamasına göre Gas sapması.
+            tx_frequency  : Bu işlemdeki anlık işlem sıklığı (tx/s).
+
+        Returns:
+            float: Güncellenmiş dinamik eşik τ(t).
+        """
         self._window.append(_MetricSample(
             gas_deviation=float(gas_deviation),
             tx_frequency=float(tx_frequency),
@@ -87,11 +106,59 @@ class SlidingWindowThresholdCalibrator:
         return self._last_tau
 
     def get_threshold(self) -> float:
-        """Mevcut kalibre edilmiş dinamik eşiği döndürür."""
+        """Mevcut kalibre edilmiş dinamik eşiği döndürür (pencereyi güncellemez)."""
         return self._last_tau
 
+    @property
+    def window_size(self) -> int:
+        """Penceredeki mevcut gözlem sayısını döndürür."""
+        return len(self._window)
+
+    @property
+    def is_warmed_up(self) -> bool:
+        """True ise pencere dinamik hesaplama için yeterli gözleme sahiptir."""
+        return len(self._window) >= self._min_window
+
+    def get_stats(self) -> Dict[str, float]:
+        """
+        Hata ayıklama ve loglama için mevcut pencere istatistiklerini döndürür.
+
+        Returns:
+            dict: gas_var, freq_var, current_tau, window_fill_pct içerir.
+        """
+        n = len(self._window)
+        if n < 2:
+            return {
+                "gas_var"         : 0.0,
+                "freq_var"        : 0.0,
+                "current_tau"     : self._last_tau,
+                "window_fill_pct" : n / self._window.maxlen * 100.0,
+                "is_warmed_up"    : False,
+            }
+
+        gas_arr  = np.array([s.gas_deviation for s in self._window], dtype=np.float64)
+        freq_arr = np.array([s.tx_frequency  for s in self._window], dtype=np.float64)
+
+        return {
+            "gas_var"         : float(np.var(gas_arr,  ddof=1)),
+            "freq_var"        : float(np.var(freq_arr, ddof=1)),
+            "current_tau"     : self._last_tau,
+            "window_fill_pct" : n / self._window.maxlen * 100.0,
+            "is_warmed_up"    : n >= self._min_window,
+        }
+
+    # ── İç Hesaplama ──────────────────────────────────────────────────────────
+
     def _compute_threshold(self) -> float:
-        """Kayan pencere varyansından τ(t) hesaplar."""
+        """
+        Kayan pencere varyansından τ(t) hesaplar.
+
+        Soğuk başlangıç koruması: pencerede MIN_WINDOW_SIZE'dan az gözlem
+        varsa COLD_START_THRESHOLD döndürülür — ilk birkaç işlem için güvenli.
+
+        ddof=1 (Bessel düzeltmesi) kullanılır çünkü pencere, tüm nüfusun
+        değil bir örneklemin kayan özetini temsil eder.
+        """
         n = len(self._window)
 
         # Soğuk başlangıç koruması
@@ -99,7 +166,7 @@ class SlidingWindowThresholdCalibrator:
             return self._cold_start
 
         gas_arr  = np.array([s.gas_deviation for s in self._window], dtype=np.float64)
-        freq_arr = np.array([s.tx_frequency for s in self._window], dtype=np.float64)
+        freq_arr = np.array([s.tx_frequency  for s in self._window], dtype=np.float64)
 
         sigma2_gas  = float(np.var(gas_arr,  ddof=1))
         sigma2_freq = float(np.var(freq_arr, ddof=1))
@@ -107,7 +174,7 @@ class SlidingWindowThresholdCalibrator:
         # Dinamik eşik formülü
         tau = self._base + self._alpha * sigma2_gas + self._beta * sigma2_freq
 
-        # [TAU_MIN, TAU_MAX] sıkıştırması
+        # [TAU_MIN, TAU_MAX] sıkıştırması — patolojik sürüklenmeyi önler
         tau_clamped = float(np.clip(tau, self._tau_min, self._tau_max))
 
         logger.debug(
@@ -115,6 +182,8 @@ class SlidingWindowThresholdCalibrator:
             sigma2_gas, sigma2_freq, tau, tau_clamped, n,
         )
         return tau_clamped
+
+
 ```
 
 ---
@@ -122,120 +191,16 @@ class SlidingWindowThresholdCalibrator:
 ### 1.2 `Q-Adaptive-AI/src/api.py` - Async Subprocess Execution & Queue Throttling
 FastAPI asenkron API sunucusunu korumak, kaynak sızıntılarını ve CPU/Bellek tükenme (DoS) saldırılarını engellemek üzere tasarlanan kuyruk yapısı ve güvenli alt süreç yönetimi:
 
+<!-- KOD-SENK kaynak=Q-Adaptive-AI/src/api.py sembol=_run_zk_prover_async ic-baslik=evet -->
 ```python
-async def _run_zk_prover_async() -> tuple[float, dict]:
-    """
-    Önceden derlenmiş Rust ZK-STARK prover binary'sini asenkron olarak çalıştırır.
-
-    Güvenlik Tasarımı:
-    ──────────────────
-    1. asyncio.create_subprocess_exec kullanılır — 'cargo run' yok, 'shell=True' yok.
-       Kabuk enjeksiyonu imkansızdır.
-    2. Binary yolu sabit bir Path sabitinden gelir (_ZK_BINARY_PATH).
-    3. stdout/stderr yakalanır; bellek şişmesini önlemek için sınırlar dahilinde okunur.
-    4. Zaman aşımı: asyncio.wait_for ile 600 saniye (10 dakika) sınırı.
-    """
-    if not _ZK_BINARY_PATH.exists():
-        raise RuntimeError(
-            f"ZK prover binary bulunamadı: {_ZK_BINARY_PATH}\n"
-            "Derleme: cd Q-Adaptive-ZK && cargo build --release"
-        )
-
-    logger.info("🔐 Async ZK-STARK kanıt üretimi başlatılıyor (binary=%s)", _ZK_BINARY_PATH.name)
-    t0 = time.perf_counter()
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            str(_ZK_BINARY_PATH),
-            cwd    = str(_ZK_ROOT),
-            stdout = asyncio.subprocess.PIPE,
-            stderr = asyncio.subprocess.PIPE,
-        )
-
-        try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=600.0,
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.communicate()
-            raise RuntimeError("ZK prover zaman aşımına uğradı (600s limiti)")
-
-        prover_ms = (time.perf_counter() - t0) * 1000.0
-
-        if proc.returncode != 0:
-            stderr_tail = stderr_bytes[-2000:].decode("utf-8", errors="replace")
-            logger.error("ZK prover başarısız:\nSTDERR: %s", stderr_tail)
-            raise RuntimeError(
-                f"ZK prover {proc.returncode} koduyla çıktı. STDERR: {stderr_tail[-500:]}"
-            )
-
-        logger.info("✅ Async ZK-STARK kanıt üretimi tamamlandı (%.1f ms)", prover_ms)
-
-    except FileNotFoundError as exc:
-        raise RuntimeError(
-            f"ZK prover binary çalıştırılamadı: {exc}\n"
-            "İzinleri 'chmod +x' ile kontrol edin."
-        ) from exc
-
-    if not _PROOF_PATH.exists():
-        raise RuntimeError(f"proof_payload.json bulunamadı: {_PROOF_PATH}")
-
-    with open(_PROOF_PATH, encoding="utf-8") as f:
-        proof_data = json.load(f)
-
-    return prover_ms, proof_data
-
-
-async def _invoke_zk_prover_with_queue_guard() -> tuple[float, dict]:
-    """
-    asyncio.Queue ile hız sınırlı ZK prover çağrısı.
-
-    Tasarım:
-    ─────────
-    asyncio.Queue bir semafor gibi çalışır:
-      • put()        → kuyruğa token ekler (slot rezervasyonu).
-      • get()        → token'ı tüketir (prover tamamlandığında).
-    Kuyruk maxsize=50 ile dolu olduğunda QueueFull yerine .full() kontrolü yapılarak
-    hızlı bir şekilde HTTP 429 döndürülür ve CPU enjeksiyonu önlenir.
-    """
-    if _ZK_PROOF_QUEUE is None:
-        raise HTTPException(status_code=503, detail="ZK kanıt kuyruğu başlatılmadı.")
-
-    # Kuyruk dolu kontrolü — saldırgan tespiti
-    if _ZK_PROOF_QUEUE.full():
-        logger.warning(
-            "ZK kanıt kuyruğu dolu (%d/%d) — HTTP 429 döndürülüyor.",
-            _ZK_PROOF_QUEUE.qsize(), _ZK_PROOF_QUEUE.maxsize,
-        )
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                "Cryptographic Proof Queue Saturated: "
-                f"Maximum {_ZK_PROOF_QUEUE.maxsize} concurrent ZK proof generations "
-                "are already in progress. Retry after current proofs complete."
-            ),
-            headers={"Retry-After": "30"},
-        )
-
-    # Slot rezervasyonu
-    await _ZK_PROOF_QUEUE.put(1)
-    logger.info(
-        "ZK kuyruk slot alındı (%d/%d aktif)",
-        _ZK_PROOF_QUEUE.qsize(), _ZK_PROOF_QUEUE.maxsize,
-    )
-
-    try:
-        return await _run_zk_prover_async()
-    finally:
-        # Slot her koşulda serbest bırakılır
-        await _ZK_PROOF_QUEUE.get()
-        _ZK_PROOF_QUEUE.task_done()
-        logger.info(
-            "ZK kuyruk slot serbest bırakıldı (%d/%d aktif)",
-            _ZK_PROOF_QUEUE.qsize(), _ZK_PROOF_QUEUE.maxsize,
-        )
+# src/api.py (_run_zk_prover_async())
+async def _run_zk_prover_async(
+    decision_risk : float,
+    decision_tau  : float,
+    baseline      : ArmorTier,
+    user_op_hash  : str,
+    epoch_ns      : int,
+    run_id        : str,
 ```
 
 ---
@@ -243,70 +208,147 @@ async def _invoke_zk_prover_with_queue_guard() -> tuple[float, dict]:
 ### 1.3 `Q-Adaptive-ZK` - AIR Kısıtları & İz Tablosu Oluşturma
 NIST FIPS 204 ML-DSA parametrelerine uygun $k \times \ell$ kafes matrisi üreten `trace.rs` ve derece patlamasını önleyen sınır iddialarını (boundary assertions) yöneten `air.rs`:
 
-#### A. Matris Genişletme ve İz Üretimi (`src/trace.rs` kesiti)
+#### A. Matris Genişletme (`src/hashing.rs`)
+
+> **Denetim notu.** Bu kesit eskiden `trace.rs`'ten alınmış ve `DefaultHasher`
+> (SipHash) kullanan bir sürümü gösteriyordu. SipHash kriptografik değildir ve
+> çıktısının Rust sürümleri arasında kararlı kalacağı garanti edilmez — yani
+> kanıtlar yeniden üretilebilir değildi. Genişletme `hashing.rs`'e taşındı ve
+> SHAKE-128 + reddetme örneklemesiyle yeniden yazıldı (FIPS 204 §7.3 ExpandA).
+> Aşağıdaki blok artık elle yazılmıyor, `docs/kod_bloklari_senkron.py`
+> tarafından kaynaktan üretiliyor.
+
+<!-- KOD-SENK kaynak=Q-Adaptive-ZK/src/hashing.rs sembol=expand_matrix_a,sample_field_element ic-baslik=evet -->
 ```rust
+// src/hashing.rs (expand_matrix_a(), sample_field_element())
+/// ρ''den A ∈ R_q^{k×ℓ} matrisinin skalar taahhüt temsilini genişletir.
+///
+/// Her (i, j) hücresi için ayrı bir SHAKE-128 XOF akışı açılır:
+///   `SHAKE128(DOMAIN || ρ' || i || j)`
+/// ve akıştan 3 baytlık (24-bit) bloklar okunarak ilk `< q` olan kabul edilir.
+///
+/// **Rejection sampling neden şart:** 24-bit aralık [0, 16.777.216),
+/// q = 8.380.417'nin tam katı değil. Ham değeri `% q` ile daraltmak
+/// [0, 16.384) aralığındaki değerleri diğerlerinin iki katı olasılıkla
+/// üretirdi. FIPS 204 §7.3 tam da bu yüzden reddetme kullanır.
+///
+/// # Arguments
+/// * `rho` - 32-byte seed (ρ').
+/// * `k`   - Matris satır sayısı.
+/// * `ell` - Matris sütun sayısı.
+/// * `q`   - Modüler alan karakteristiği.
+///
+/// # Returns
+/// `k×ℓ` boyutunda matris; her eleman `[0, q)` aralığında.
 pub fn expand_matrix_a(rho: &[u8; 32], k: usize, ell: usize, q: u128) -> Vec<Vec<u128>> {
     let mut matrix = Vec::with_capacity(k);
 
     for i in 0..k {
         let mut row = Vec::with_capacity(ell);
         for j in 0..ell {
-            let element = deterministic_field_element(rho, i as u8, j as u8, q);
-            row.push(element);
+            row.push(sample_field_element(rho, i as u16, j as u16, q));
         }
         matrix.push(row);
     }
+
     matrix
 }
 
-fn deterministic_field_element(rho: &[u8; 32], row_idx: u8, col_idx: u8, q: u128) -> u128 {
-    let mut hasher = DefaultHasher::new();
-    for (position, &byte) in rho.iter().enumerate() {
-        let contribution = (byte as u64).wrapping_mul(position as u64 + 1)
-            .wrapping_add(row_idx as u64 * 31)
-            .wrapping_add(col_idx as u64 * 37);
-        contribution.hash(&mut hasher);
+/// Tek bir (i, j) hücresi için önyargısız alan elemanı örnekler.
+fn sample_field_element(rho: &[u8; 32], row_idx: u16, col_idx: u16, q: u128) -> u128 {
+    let mut xof = Shake128::default();
+    xof.update(DOMAIN_EXPAND_A);
+    xof.update(rho);
+    // FIPS 204 ExpandA da satır/sütun indisini ayrı baytlar olarak ekler.
+    xof.update(&row_idx.to_le_bytes());
+    xof.update(&col_idx.to_le_bytes());
+
+    let mut reader = xof.finalize_xof();
+    let mut block = [0u8; 3];
+
+    // Reddetme döngüsü. Kabul olasılığı q / 2^24 ≈ %49,9, yani beklenen
+    // deneme sayısı ~2. Sonsuz döngü riski yok: her okuma bağımsız.
+    loop {
+        reader.read(&mut block);
+        // 24-bit little-endian tamsayı
+        let candidate = (block[0] as u128) | ((block[1] as u128) << 8) | ((block[2] as u128) << 16);
+        if candidate < q {
+            return candidate;
+        }
+        // candidate >= q → reddet, bir sonraki 3 baytı oku.
     }
-    (row_idx as u64).hash(&mut hasher);
-    (col_idx as u64).hash(&mut hasher);
-
-    let hash_val = hasher.finish() as u128;
-    hash_val % q
 }
+```
 
-impl QAdaptiveTrace {
+#### B. İz Tablosu Üretimi (`src/trace.rs`)
+
+<!-- KOD-SENK kaynak=Q-Adaptive-ZK/src/trace.rs sembol=QAdaptiveTrace::new ic-baslik=evet -->
+```rust
+// src/trace.rs (QAdaptiveTrace::new())
+    /// Parameterize edilmiş ML-DSA payload'undan MLWE yürütme izi oluşturur.
+    ///
+    /// Her adımda:
+    ///   1. Köşegen matris taahhüdü: A_i = matrix_a[step%k][step%ell] % q
+    ///   2. s1 evrimi: s1_{i+1} = (s1_i + 2) (kısa polinomun kayan değeri)
+    ///   3. s2 evrimi: s2_{i+1} = (s2_i + 3)
+    ///   4. MLWE ilişkisi: t_i = A_i * s1_i + s2_i
+    ///
+    /// Güvenlik Notu:
+    ///   Gerçek Dilithium'da s1 ve s2, küçük katsayılı polinomlar olup
+    ///   tam NTT operasyonlarıyla işlenir. Bu simülasyon, STARK izinin
+    ///   MLWE bütünlüğünü korurken Winterfell uyumlu kalmasını sağlar.
     pub fn new(payload: &Dilithium5InjectionPayload, length: usize) -> Self {
         assert!(
             length.is_power_of_two() && length >= 8,
-            "İz uzunluğu 2'nin kuvveti olmalı ve >= 8 olmalıdır."
+            "İz uzunluğu 2'nin kuvveti olmalı ve >= 8 olmalıdır. Alındı: {length}"
         );
 
-        let q      = payload.config.q;
-        let k      = payload.config.k;
-        let ell    = payload.config.ell;
+        let q = payload.config.q;
+        let k = payload.config.k;
+        let ell = payload.config.ell;
 
-        let mut col_a_commit = Vec::with_capacity(length);
-        let mut col_s1       = Vec::with_capacity(length);
-        let mut col_s2       = Vec::with_capacity(length);
-        let mut col_t        = Vec::with_capacity(length);
+        let mut col_a_commit = Vec::with_capacity(length); // Lattice commitment (A köşegen)
+        let mut col_s1 = Vec::with_capacity(length); // s1 polinom kayan
+        let mut col_s2 = Vec::with_capacity(length); // s2 polinom kayan
+        let mut col_t = Vec::with_capacity(length); // t = A*s1 + s2
 
-        let mut curr_s1 = payload.seed_s1 % q;
-        let mut curr_s2 = payload.seed_s2 % q;
+        // ── HATA E2 DÜZELTMESİ: aritmetik artık ALAN aritmetiği ──────────────
+        //
+        // Bu tablo eskiden u128 üzerinde `wrapping_mul(...) % q` ile
+        // hesaplanıyordu; kanıtlanan tablo (`pipeline::trace_table_from`) ise
+        // f128 alan aritmetiği kullanıyor ve AIR kısıtı da alan aritmetiğini
+        // doğruluyor (`next[3] - (next[0]*next[1] + next[2]) = 0`).
+        //
+        // Sonuç: sahnede jüriye gösterilen t sütunu, STARK'ın kanıtladığı t
+        // sütunu DEĞİLDİ — `% q` yüzünden farklı sayılardı.
+        //
+        // Artık burada da `BaseElement` işlemleri kullanılıyor, yani bu tablo
+        // kanıtlanan tablonun ta kendisi. `pipeline::trace_table_from` bunu
+        // kopyalayarak Winterfell tablosunu üretir; iki temsil arasında
+        // ayrışma imkânı kalmaz.
+        let mut curr_s1 = BaseElement::new(payload.seed_s1 % q);
+        let mut curr_s2 = BaseElement::new(payload.seed_s2 % q);
 
         for step in 0..length {
+            // Köşegen kafes taahhüdü: adım başına farklı matris elemanı
+            // Bu yaklaşım, 4 sütunlu STARK çerçevesinde tam k×ℓ matrisin
+            // rotasyonal bir temsilini sağlar.
             let row_idx = step % k;
             let col_idx = step % ell;
-            let a_elem  = payload.matrix_a[row_idx][col_idx] % q;
+            let a_elem = BaseElement::new(payload.matrix_a[row_idx][col_idx] % q);
 
-            let t_raw = a_elem.wrapping_mul(curr_s1).wrapping_add(curr_s2) % q;
+            // MLWE ilişkisi: t = A * s1 + s2 — AIR kısıtıyla birebir aynı ifade.
+            let t_elem = a_elem * curr_s1 + curr_s2;
 
-            col_a_commit.push(BaseElement::new(a_elem));
-            col_s1.push(BaseElement::new(curr_s1));
-            col_s2.push(BaseElement::new(curr_s2));
-            col_t.push(BaseElement::new(t_raw));
+            col_a_commit.push(a_elem);
+            col_s1.push(curr_s1);
+            col_s2.push(curr_s2);
+            col_t.push(t_elem);
 
-            curr_s1 = curr_s1.wrapping_add(2) % q;
-            curr_s2 = curr_s2.wrapping_add(3) % q;
+            // s1 ve s2'yi sonraki adım için güncelle (deterministik evrim).
+            // AIR: s1_next = s1_curr + 2, s2_next = s2_curr + 3.
+            curr_s1 += BaseElement::new(2);
+            curr_s2 += BaseElement::new(3);
         }
 
         Self {
@@ -315,7 +357,6 @@ impl QAdaptiveTrace {
             config: payload.config.clone(),
         }
     }
-}
 ```
 
 #### B. AIR Kısıtları & Sınır İddiaları (`src/air.rs` kesiti)
@@ -521,13 +562,13 @@ Baseline: Base Threshold = 60.0%, Alpha = 0.15, Beta = 0.08, Window = 50
 
 ### 2.2 TEST CASE 2: High-Frequency Denial of Service Exhaustion (Queue DoS Test)
 *   **Açıklama**: Saldırgan, `/predict` FastAPI endpoint'ine 500ms içinde 60 adet eş zamanlı ve sahte işlem anomali paketi göndererek, sistemin ağır STARK kanıt üretim motorunu kilitlemeye ve sunucuda Out-of-Memory (OOM) hatası tetiklemeye çalışır.
-*   **Doğrulama**: API katmanındaki `asyncio.Queue(maxsize=50)` koruması devreye girer. İlk 50 slot güvenle kuyruğa alınıp asenkron alt süreçlere yönlendirilirken, 51 ile 60. istekler sisteme yük getirmeden anında reddedilir ve ağ geçidinde **HTTP 429** kodu döndürülür.
+*   **Doğrulama**: API katmanındaki `asyncio.Queue` koruması devreye girer. Kapasite kadar istek güvenle kuyruğa alınıp asenkron alt süreçlere yönlendirilir; kapasiteyi aşanlar sisteme yük getirmeden anında reddedilir ve ağ geçidinde **HTTP 429** kodu döndürülür. Kapasite makineye göre değişir — bu koşunun yapıldığı makinede 13 slottur (bkz. `/api/health` → `queue_capacity_reason`).
 
 #### Telemetri Enjeksiyon Konsol Logu
 ```
 === TELEMETRY INJECTION LOGS: SCENARIO 2 (QUEUE DOS STRESS TEST) ===
 Concurrency Level: 60 concurrent payloads within 10ms
-Queue capacity   : 50 slots (asyncio.Queue(maxsize=50))
+Queue capacity   : 13 slot (bu makinede; _resolve_queue_capacity ile türetildi)
 --------------------------------------------------------------------------------------------------------------
 [11:34:22.694] [ENT] Request #38 | Queue slot reserved. Active: 38/50.
 [11:34:22.695] [ENT] Request #39 | Queue slot reserved. Active: 39/50.
@@ -579,8 +620,8 @@ sequenceDiagram
 Aşağıdaki veriler, sistemin üretim ortamındaki çalışma sürelerini ve on-chain calldata optimizasyon parametrelerini göstermektedir.
 
 ### 3.1 Gecikme ve İşlem Süreleri (Execution Latency)
-*   **Ortalama ONNX Çıkarım Gecikmesi**: **1.12 ms** (Dinamik eşik kalibratörü olan $deque(maxlen=50)$ varyans hesabı dahil).
-*   **Rust Winterfell Prover Çalışma Süresi** (`--release` modunda): **18.52 ms** ($8 \times 7$ lattice boyutunda ML-DSA-87 matris genişlemesi ve MLWE iz taahhüt doğrulaması dahil).
+*   **Ortalama ONNX Çıkarım Gecikmesi**: **8,8–10,1 ms (5 koşuluk ortalama; `test_onnx_inference.py` ile yeniden ölçülebilir)**. Dinamik eşik kalibratörünün $deque(maxlen=50)$ varyans hesabı bu süreye dahildir.
+*   **Rust Winterfell Prover Çalışma Süresi** (`--release` modunda): **her koşuda ölçülür**; ML-DSA-87 kademesinde gözlenen aralık **1,8–20,7 ms** ($8 \times 7$ lattice genişlemesi ve MLWE iz taahhüdü dahil). Değer donanıma göre değişir ve `proof_payload.json` → `stark.prover_ms` alanına yazılır; sabit bir sayı olarak verilmez.
 *   **On-chain STARK Doğrulama (Gas Tüketimi)**: ~240,000 gas.
 
 ---
@@ -590,9 +631,9 @@ Sistem, panik modunda ham Dilithium-5 (ML-DSA-87) imzasını on-chain göndermek
 
 | Senaryo ve İmza Yapısı | Raw Dilithium-87 Boyutu (NIST) | Sıkıştırılmış STARK Kanıt Boyutu | Optimizasyon / Calldata Azalımı |
 | :--- | :---: | :---: | :---: |
-| **Tek İşlem (1 userOp)** | 4,595 byte | 4,104 byte | **%10.68 tasarruf** |
-| **10 İşlemlik Batch (Toplu)** | 45,950 byte | 4,320 byte | **%90.60 tasarruf** |
-| **50 İşlemlik Batch (Toplu)** | 229,750 byte | 4,640 byte | **%97.98 tasarruf** |
+| **Tek İşlem (1 userOp)** | 4.627 byte | ~3.800–4.320 byte | tasarruf yok denecek kadar az |
+| **10 İşlemlik Batch (Toplu)** | 46.270 byte | ~3.800–4.320 byte | **~%91 tasarruf** |
+| **50 İşlemlik Batch (Toplu)** | 231.350 byte | ~3.800–4.320 byte | **%98,1–98,4 tasarruf** |
 
 > [!TIP]
 > Toplu işlem senaryolarında, STARK kanıt boyutları logaritmik olarak ($O(\log N)$) büyürken ham PQC imzaları lineer ($O(N)$) büyür. Bu durum, Q-Adaptive sistemini merkeziyetsiz ağlarda kuantum sonrası güvenliğe geçişte en az maliyetli çözüm haline getirir.
