@@ -134,6 +134,63 @@ bak.
 
 ---
 
+## 1c. Üçüncü tur — yeni oracle sözleşmesinin ilk taraması
+
+`QAdaptiveAICore.sol` konuşlandırma yolu açılırken eklendi ve Slither'ın
+gördüğü **ilk** koşuda tek bir dedektör bildirimde bulundu.
+
+### `incorrect-equality` (2 bulgu) — hedefli susturma
+
+```
+QAdaptiveAICore._isStale() (contracts/QAdaptiveAICore.sol#206-211)
+    uses a dangerous strict equality:
+        - lastUpdate == 0 (contracts/QAdaptiveAICore.sol#207)
+QAdaptiveAICore.age() (contracts/QAdaptiveAICore.sol#199-204)
+    uses a dangerous strict equality:
+        - lastUpdate == 0 (contracts/QAdaptiveAICore.sol#200)
+```
+
+Dedektör, `block.timestamp` gibi oynatılabilir ya da atlanabilir değerlerle
+katı eşitlik kurulmasına karşı uyarır. Buradaki karşılaştırma bir zaman
+damgası karşılaştırması **değil**, bir **ilklendirme nöbetçisi**:
+`lastUpdate` yalnızca hiç `updateRiskStatus` çağrılmamışsa 0 kalır ve canlı
+bir zincirde `block.timestamp` asla 0 olmadığı için başka türlü 0 olamaz.
+Yani dedektörün asıl kaygısı — eşitliği kaçırmak — burada doğmuyor.
+
+**Dal neden duruyor:** Canlı zincirde teknik olarak gereksizdir;
+`block.timestamp - 0` zaten her `maxAge`'den (azami 7 gün) büyüktür. Ama
+zincirin ilk saniyelerinde ve testlerde öyle değil: `vm.warp(1)` ile
+`1 > 3600` yanlış çıkar ve **hiç güncellenmemiş bir oracle TAZE görünürdü.**
+Bu, oracle'ın tek gerçek güvenlik kararını — bayatken azami zırh — sessizce
+devre dışı bırakırdı. `test_hic_guncellenmemis_oracle_BAYATTIR` bunu
+sabitliyor.
+
+Dedektörün tamamı kapatılmadı; yalnızca iki satıra
+`// slither-disable-next-line incorrect-equality` kondu.
+
+#### Yönerge yerleşimi — §1b'deki ders burada da geçerliydi
+
+İlk denemede yönergeyi `_isStale()` **fonksiyon bildiriminin** üstüne koydum;
+yukarıda bir kez düştüğümüz tuzağın aynısı. Slither bulguyu alt maddede
+`#207`'de, yani `if` satırında bildiriyor. Yönerge, bildirimin değil
+**çıktıda gösterilen satırın** üstüne taşındı.
+
+> **Doğrulanmadı.** Slither yerelde kurulu değil ve ağ erişimi yok; bu
+> yerleşim bir sonraki CI koşusunda görülecek. Tutmazsa burada gerekçesiyle
+> güncellenecek — dedektör kapatılmayacak.
+
+### `script/` neden `filter_paths`'e eklendi
+
+Konuşlandırma betiği (`script/Deploy.s.sol`) hiçbir zaman zincire
+konuşlandırılmaz; geliştirici makinesinde çalışan bir araçtır. Slither'ın
+zafiyet dedektörleri konuşlandırılan sözleşmeler için anlamlıdır. Bu yüzden
+`script/`, zaten aynı gerekçeyle dışlanmış `test/` ile aynı kategoriye kondu.
+
+**Sözleşmelerin kendisinde hiçbir şey körlenmedi** — `contracts/` tam olarak
+taranıyor ve `QAdaptiveAICore` bu turda ilk kez oradan tarandı.
+
+---
+
 ## 2. Gerekçeyle dışlanan bulgular
 
 Bunlar `slither.config.json` içinde `detectors_to_exclude` ile dışlandı.

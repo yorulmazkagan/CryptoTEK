@@ -197,13 +197,41 @@ contract QAdaptiveAICore is IAICore {
     ///         first one, so callers cannot mistake "never updated" for "just
     ///         updated at timestamp 0".
     function age() external view returns (uint256) {
+        // slither-disable-next-line incorrect-equality
         if (lastUpdate == 0) {
             return type(uint256).max;
         }
         return block.timestamp - lastUpdate;
     }
 
+    /**
+     * @dev Slither `incorrect-equality` — bilinçli ve güvenli.
+     *
+     *      Dedektör, `block.timestamp` gibi oynatılabilir ya da atlanabilir
+     *      değerlerle KATI EŞİTLİK kurulmasına karşı uyarır. Buradaki
+     *      karşılaştırma bir zaman damgası karşılaştırması değil, bir
+     *      **ilklendirme nöbetçisi**: `lastUpdate` yalnızca hiç
+     *      `updateRiskStatus` çağrılmamışsa 0 kalır. Canlı bir zincirde
+     *      `block.timestamp` asla 0 olmadığı için bu durum başka türlü
+     *      oluşamaz; yani "eşitliği kaçırma" riski yok.
+     *
+     *      Dal neden gerekli: canlı zincirde teknik olarak gereksizdir —
+     *      `block.timestamp - 0` zaten her `maxAge`'den (azami 7 gün)
+     *      büyüktür. Ama zincirin ilk saniyelerinde ve testlerde öyle
+     *      değildir: `vm.warp(1)` ile `1 > 3600` yanlış çıkar ve hiç
+     *      güncellenmemiş bir oracle TAZE görünürdü. Bu yüzden nöbetçi
+     *      kontrolü duruyor; `test_hic_guncellenmemis_oracle_BAYATTIR`
+     *      tam olarak bunu sabitliyor.
+     *
+     *      Dedektörün tamamı kapatılmadı — yalnızca bu iki satır.
+     *
+     *      Yönerge yerleşimi: `slither-disable-next-line` bir sonraki KAYNAK
+     *      SATIRINI susturur ve Slither bulguyu alt maddede `#207`, yani
+     *      `if` satırında bildiriyor — fonksiyon bildiriminde değil. Bu ayrım
+     *      koşu #13'te bir kez öğrenildi (bkz. SLITHER_TRIYAJI.md).
+     */
     function _isStale() internal view returns (bool) {
+        // slither-disable-next-line incorrect-equality
         if (lastUpdate == 0) {
             return true;
         }
