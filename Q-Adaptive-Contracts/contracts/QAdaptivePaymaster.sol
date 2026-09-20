@@ -143,6 +143,12 @@ contract QAdaptivePaymaster {
         uint256 actualCost
     );
 
+    /// @notice Sahiplik devredildiğinde.
+    event OwnershipTransferred(address indexed previous, address indexed current);
+
+    /// @notice Dönem uzunluğu değiştiğinde.
+    event EpochDurationUpdated(uint256 previous, uint256 current);
+
     // ─────────────────────────────────────────────────────────────────────────────
     // Modifiers
     // ─────────────────────────────────────────────────────────────────────────────
@@ -395,6 +401,42 @@ contract QAdaptivePaymaster {
         epochBudget          = _epochBudget;
 
         emit LimitsUpdated(_maxCostPerOperation, _perAccountEpochQuota, _epochBudget);
+    }
+
+    /**
+     * @notice Sahipliği yeni bir adrese devreder.
+     *
+     * @dev Slither `owner`'ın hiç yeniden atanmadığını, `immutable`
+     *      yapılabileceğini bildirdi. Teknik olarak doğruydu ama `immutable`
+     *      yapmak sahipliği kalıcı olarak dondururdu — bu sözleşmede 5
+     *      fonksiyon `onlyOwner` ile kapılı ve mevduat yönetimi de dahil.
+     *      Eksik olan gaz optimizasyonu değil, devir yeteneğiydi.
+     */
+    function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "QAdaptivePaymaster: new owner is zero");
+        address previous = owner;
+        owner = newOwner;
+        emit OwnershipTransferred(previous, newOwner);
+    }
+
+    /**
+     * @notice Dönem uzunluğunu günceller.
+     *
+     * @dev `updateLimits` üç limiti güncelleyebiliyordu ama `epochDuration`
+     *      dışarıda kalmıştı — tutarsızlıktı. Dönem uzunluğu kota ve bütçe
+     *      davranışını doğrudan belirlediği için onlarla birlikte
+     *      ayarlanabilmeli.
+     *
+     *      DİKKAT: Dönem uzunluğu değişince `epochIndex()` de değişir ve
+     *      mevcut dönemin harcama sayacı yeni bir döneme kaymış görünebilir.
+     *      Bu, kotayı erken sıfırlayabilir; bu yüzden değişiklik olayla
+     *      zincire yazılıyor.
+     */
+    function setEpochDuration(uint256 newDuration) external onlyOwner {
+        require(newDuration > 0, "QAdaptivePaymaster: epochDuration is zero");
+        uint256 previous = epochDuration;
+        epochDuration = newDuration;
+        emit EpochDurationUpdated(previous, newDuration);
     }
 
     /**

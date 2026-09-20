@@ -207,6 +207,72 @@ contract QAdaptivePaymasterEdgesTest is Test {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
+    // Sahiplik ve Dönem Uzunluğu
+    // ═════════════════════════════════════════════════════════════════════════
+    //
+    // Slither `owner` ve `epochDuration`'ın hiç yeniden atanmadığını, dolayısıyla
+    // `immutable` yapılabileceğini bildirmişti. Doğru çözüm onları dondurmak
+    // değil, gerçekten değiştirilebilir kılmaktı — mevduat yönetimi sahibe
+    // bağlı ve `epochDuration` diğer üç limitin aksine güncellenemiyordu.
+
+    function test_sahiplik_devredilebiliyor() public {
+        address yeniSahip = address(0xC0FFEE);
+
+        vm.prank(owner);
+        paymaster.transferOwnership(yeniSahip);
+        assertEq(paymaster.owner(), yeniSahip);
+
+        // Yeni sahip yetkileri kullanabilmeli.
+        vm.prank(yeniSahip);
+        paymaster.setAccountSponsorship(address(0x1234), true);
+        assertTrue(paymaster.sponsoredAccounts(address(0x1234)));
+
+        // Eski sahip artık yetkisiz.
+        vm.prank(owner);
+        vm.expectRevert("QAdaptivePaymaster: caller must be owner");
+        paymaster.setAccountSponsorship(address(0x5678), true);
+    }
+
+    function test_sifir_adrese_devir_reddediliyor() public {
+        vm.prank(owner);
+        vm.expectRevert("QAdaptivePaymaster: new owner is zero");
+        paymaster.transferOwnership(address(0));
+    }
+
+    function test_sadece_sahip_devredebilir() public {
+        vm.prank(address(0xBAD));
+        vm.expectRevert("QAdaptivePaymaster: caller must be owner");
+        paymaster.transferOwnership(address(0xBAD));
+    }
+
+    /// @notice Dönem uzunluğu güncellenebiliyor ve sayaç buna göre değişiyor.
+    function test_donem_uzunlugu_guncellenebiliyor() public {
+        assertEq(paymaster.epochIndex(), 0);
+
+        vm.warp(block.timestamp + EPOCH_DURATION / 2);
+        assertEq(paymaster.epochIndex(), 0, "yarim donemde hala 0 olmali");
+
+        // Dönem uzunluğu yarıya inince aynı an artık 1. döneme düşer.
+        vm.prank(owner);
+        paymaster.setEpochDuration(EPOCH_DURATION / 2);
+
+        assertEq(paymaster.epochDuration(), EPOCH_DURATION / 2);
+        assertEq(paymaster.epochIndex(), 1, "kisalan donemde indeks ilerlemeli");
+    }
+
+    function test_sifir_donem_uzunlugu_reddediliyor() public {
+        vm.prank(owner);
+        vm.expectRevert("QAdaptivePaymaster: epochDuration is zero");
+        paymaster.setEpochDuration(0);
+    }
+
+    function test_sadece_sahip_donem_uzunlugu_degistirebilir() public {
+        vm.prank(address(0xBAD));
+        vm.expectRevert("QAdaptivePaymaster: caller must be owner");
+        paymaster.setEpochDuration(1 hours);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
     // Dönem Sayacı
     // ═════════════════════════════════════════════════════════════════════════
 

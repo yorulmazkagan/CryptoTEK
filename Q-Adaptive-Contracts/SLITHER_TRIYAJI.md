@@ -56,6 +56,62 @@ açısından kritik bir olay ve belirli bir adrese göre filtrelenebilmeli.
 
 ---
 
+## 1b. İkinci tur — kapı açıldıktan sonra çıkan 6 bulgu
+
+`continue-on-error` kaldırılıp Slither gerçek bir kapı hâline gelince, ilk
+triyajda görülmeyen iki dedektör daha bildirimde bulundu.
+
+### `immutable-states` (4 bulgu) — setter eklendi, `immutable` YAPILMADI
+
+Slither şunların hiç yeniden atanmadığını, dolayısıyla `immutable`
+yapılabileceğini bildirdi:
+
+| Alan | Slither haklı mıydı | Ne yapıldı |
+|---|---|---|
+| `QAdaptiveAccount.owner` | Evet, yalnızca kurucuda atanıyordu | `transferOwnership()` eklendi |
+| `QAdaptiveAccount.aiCore` | Evet | `setAICore()` eklendi |
+| `QAdaptivePaymaster.owner` | Evet | `transferOwnership()` eklendi |
+| `QAdaptivePaymaster.epochDuration` | Evet | `setEpochDuration()` eklendi |
+
+**Neden `immutable` yapmadık:** Bu bir *optimizasyon* bulgusu, güvenlik
+bulgusu değil. Ve önerilen düzeltmeyi uygulamak bir **gerileme** olurdu:
+
+- `owner` bu sözleşmelerde 11 + 5 fonksiyonu kapılıyor. Bir **akıllı
+  hesapta** sahip anahtarının ele geçirilmesi gerçek bir senaryodur;
+  sahipliği kalıcı olarak dondurmak o anahtardan kurtulma yolunu da
+  kapatırdı.
+- `aiCore` sabitlenirse, oracle sözleşmesi kullanımdan kalktığında ya da
+  ele geçirildiğinde hesap kurtarılamaz hâle gelirdi.
+- `epochDuration` zaten bir tutarsızlıktı: `updateLimits` diğer üç limiti
+  güncelleyebiliyordu ama dönem uzunluğu dışarıda kalmıştı.
+
+Yani eksik olan gaz optimizasyonu değil, **devir yeteneğiydi**. Alanları
+gerçekten değiştirilebilir kılmak bulguyu meşru biçimde kapattı —
+dedektörü susturarak değil. 12 yeni test eklendi.
+
+### `missing-zero-check` (2 bulgu) — hedefli susturma
+
+Kalan iki bulgu `_guardianSigner` (kurucu) ve `setGuardianSigner(newSigner)`.
+
+**Sıfır adres burada KASITLI olarak geçerlidir:** "guardian yok" anlamına
+gelir ve `_verifyAttestation` bunu açıkça ele alır
+(`if (guardianSigner == address(0)) return (0, false)`). Sıfır kontrolü
+eklemek, guardian imzası kaynağını devre dışı bırakma yeteneğini ortadan
+kaldırırdı.
+
+Dedektörün **tamamı kapatılmadı** — aynı dedektör `_entryPoint` ve `_owner`
+için gerçek bir eksik yakalamıştı (bkz. §1). Bunun yerine tam o iki satırda
+`// slither-disable-next-line missing-zero-check` kullanıldı ve gerekçe
+koda yorum olarak yazıldı. `test_guardian_sifira_ayarlanabiliyor` bu
+kararın bilinçli olduğunu sabitliyor.
+
+> **Doğrulanmadı:** Bu iki susturma yorumu ve yeni setter'ların bulguları
+> kapattığı yerelde sınanamadı (Slither pip ile kuruluyor, ağ erişimi
+> yoktu). Bir sonraki CI koşusunda doğrulanacak. Susturma beklendiği gibi
+> çalışmazsa burada gerekçesiyle güncellenecek — dedektör kapatılmayacak.
+
+---
+
 ## 2. Gerekçeyle dışlanan bulgular
 
 Bunlar `slither.config.json` içinde `detectors_to_exclude` ile dışlandı.

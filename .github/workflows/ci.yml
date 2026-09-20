@@ -8,7 +8,20 @@ on:
 
 env:
   PYTHON_VERSION: "3.11"
-  RUST_TOOLCHAIN: "stable"
+
+  # Rust surumu SABITLENDI (solhint@5 ve slither-analyzer==0.11.6 ile ayni
+  # gerekce). "stable" iken CI, gelistiricinin yerelindekinden daha yeni bir
+  # derleyici kullaniyordu ve clippy'nin yeni eklenen lint'leri yerelde
+  # gorunmeden CI'i kiriyordu — tam olarak boyle bir kirilma yasandi:
+  #
+  #   yerel  clippy 0.1.96  -> temiz
+  #   CI     clippy 1.98    -> error: redundant reference in `format!` argument
+  #
+  # Sabit surum, "yerelde gecti" ifadesinin CI icin de anlamli olmasini
+  # saglar. Yukseltme bilincli bir karar olmali: burayi artir, yerelde ayni
+  # surumu kur (`rustup toolchain install`), clippy'yi kosur, cikan yeni
+  # lint'leri duzelt.
+  RUST_TOOLCHAIN: "1.96"
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────

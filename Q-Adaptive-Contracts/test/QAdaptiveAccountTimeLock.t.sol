@@ -332,6 +332,119 @@ contract QAdaptiveAccountTimeLockTest is Test {
         account.raiseArmorBaseline(4);
     }
 
+    // ═════════════════════════════════════════════════════════════════════════
+    // Sahiplik ve Oracle Devri
+    // ═════════════════════════════════════════════════════════════════════════
+    //
+    // Bu fonksiyonlar Slither'ın `immutable-states` bulgusu üzerine eklendi.
+    // Slither `owner` ve `aiCore`'un hiç yeniden atanmadığını, dolayısıyla
+    // `immutable` yapılabileceğini söylüyordu. Teknik olarak doğruydu — ama
+    // doğru çözüm onları dondurmak değil, gerçekten değiştirilebilir kılmaktı:
+    // bir akıllı hesapta sahip anahtarının ele geçirilmesi gerçek bir senaryo
+    // ve ondan kurtulma yolu kapatılmamalı.
+
+    /// @notice Sahiplik devredilebiliyor ve yeni sahip yetkileri kullanabiliyor.
+    function test_sahiplik_devredilebiliyor() public {
+        address yeniSahip = address(0xC0FFEE);
+
+        vm.prank(owner);
+        account.transferOwnership(yeniSahip);
+        assertEq(account.owner(), yeniSahip, "Sahiplik devredilmedi");
+
+        // Yeni sahip yetkileri kullanabilmeli.
+        vm.prank(yeniSahip);
+        account.addSafeDestination(alici);
+        assertTrue(account.safeDestinationWhitelist(alici));
+
+        // Eski sahip artık yetkisiz olmalı.
+        vm.prank(owner);
+        vm.expectRevert();
+        account.addSafeDestination(address(0xBEEF2));
+    }
+
+    /// @notice Sıfır adrese devir reddediliyor — hesap sahipsiz kalamaz.
+    function test_sifir_adrese_devir_reddediliyor() public {
+        vm.prank(owner);
+        vm.expectRevert("QAdaptiveAccount: new owner is zero");
+        account.transferOwnership(address(0));
+    }
+
+    function test_sadece_sahip_devredebilir() public {
+        vm.prank(address(0xBAD));
+        vm.expectRevert();
+        account.transferOwnership(address(0xBAD));
+    }
+
+    /// @notice AI Core değiştirilebiliyor — oracle kullanımdan kalkarsa kurtarma yolu.
+    function test_aicore_degistirilebiliyor() public {
+        MockAICore yeniCore = new MockAICore();
+        yeniCore.setStatus(4242, false);
+
+        vm.prank(owner);
+        account.setAICore(address(yeniCore));
+        assertEq(address(account.aiCore()), address(yeniCore), "aiCore degismedi");
+
+        // Yeni oracle gerçekten kullanılıyor mu? Riski eşiğin üstüne çıkar.
+        yeniCore.setStatus(9000, false);
+
+        QAdaptiveAccount.AirVerificationMetadata memory bos;
+        QAdaptiveAccount.GuardianAttestation memory att =
+            QAdaptiveAccount.GuardianAttestation(0, 0, "");
+
+        UserOperation memory op;
+        op.sender    = address(account);
+        op.signature = abi.encode(new bytes(0), bos, uint256(0), att);
+
+        vm.prank(address(entryPoint));
+        uint256 sonuc = account.validateUserOp(op, bytes32(uint256(9)), 0);
+
+        assertEq(
+            sonuc, account.SIG_VALIDATION_FAILED(),
+            "Yeni oracle'in skoru karara girmedi"
+        );
+    }
+
+    function test_sifir_aicore_reddediliyor() public {
+        vm.prank(owner);
+        vm.expectRevert("QAdaptiveAccount: aiCore is zero");
+        account.setAICore(address(0));
+    }
+
+    /// @notice Guardian SIFIR adrese ayarlanabilir — "guardian yok" demektir.
+    ///
+    /// @dev Slither bu iki noktada `missing-zero-check` bildiriyordu. Sıfır
+    ///      kontrolü eklemek guardian kaynağını devre dışı bırakma yeteneğini
+    ///      ortadan kaldırırdı; bu yüzden dedektör tam o satırlarda
+    ///      `slither-disable-next-line` ile susturuldu. Bu test o kararın
+    ///      bilinçli olduğunu sabitler.
+    function test_guardian_sifira_ayarlanabiliyor() public {
+        vm.startPrank(owner);
+        account.setGuardianSigner(address(0));
+        vm.stopPrank();
+
+        assertEq(account.guardianSigner(), address(0));
+
+        // Guardian yokken GUARDIAN_SIGNATURE kaynağı doğrulamayı geçiremez.
+        vm.prank(owner);
+        account.setRiskSource(QAdaptiveAccount.RiskSource.GUARDIAN_SIGNATURE);
+
+        QAdaptiveAccount.AirVerificationMetadata memory bos;
+        QAdaptiveAccount.GuardianAttestation memory att =
+            QAdaptiveAccount.GuardianAttestation(0, block.timestamp + 1 hours, new bytes(65));
+
+        UserOperation memory op;
+        op.sender    = address(account);
+        op.signature = abi.encode(new bytes(0), bos, uint256(0), att);
+
+        vm.prank(address(entryPoint));
+        uint256 sonuc = account.validateUserOp(op, bytes32(uint256(11)), 0);
+
+        assertEq(
+            sonuc, account.SIG_VALIDATION_FAILED(),
+            "Guardian yokken imza kaynagi gecerli sayildi"
+        );
+    }
+
     /// @notice Zaman kilidi imza doğrulamasını KAPILAMIYOR.
     /// @dev İkisi bağımsız katmanlar; karışırlarsa bu test kırılır.
     function test_zaman_kilidi_imza_dogrulamasini_engellemiyor() public {

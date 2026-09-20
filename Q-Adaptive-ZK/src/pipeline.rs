@@ -219,7 +219,7 @@ pub fn run(request: &RunRequest) -> Result<RunOutcome, String> {
         if request.rho_override.is_some() {
             "dışarıdan verildi".to_string()
         } else {
-            format!("BLAKE3 → {}…", &hex::encode(&rho_prime[..8]))
+            format!("BLAKE3 → {}…", hex::encode(&rho_prime[..8]))
         },
     ));
 

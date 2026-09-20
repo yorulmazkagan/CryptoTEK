@@ -268,6 +268,12 @@ contract QAdaptiveAccount {
     ///      bir olay ve belirli bir adrese göre filtrelenebilmeli.
     event GuardianSignerUpdated(address indexed previous, address indexed current);
 
+    /// @notice Sahiplik devredildiğinde.
+    event OwnershipTransferred(address indexed previous, address indexed current);
+
+    /// @notice AI Core oracle adresi değiştiğinde.
+    event AICoreUpdated(address indexed previous, address indexed current);
+
     /// @notice Zırh düşürüldüğünde (yalnızca sahip yapabilir).
     event QuantumArmorDowngraded(string newTier, uint8 newRank);
 
@@ -339,6 +345,12 @@ contract QAdaptiveAccount {
     // Constructor
     // ─────────────────────────────────────────────────────────────────────────
 
+    /// @dev `slither-disable-next-line missing-zero-check`: `_guardianSigner`
+    ///      için sıfır kontrolü KASITLI olarak yok — sıfır adres "guardian yok"
+    ///      demektir. Gerekçe aşağıdaki kurucu yorumunda ve
+    ///      `SLITHER_TRIYAJI.md`'de. Dedektörün tamamı kapatılmadı: aynı
+    ///      dedektör `_entryPoint` ve `_owner` için GERÇEK bir eksik yakalamıştı.
+    // slither-disable-next-line missing-zero-check
     constructor(
         address _entryPoint,
         address _aiCore,
@@ -975,10 +987,54 @@ contract QAdaptiveAccount {
     }
 
     /// @notice Guardian attestation'larını imzalamaya yetkili adresi ayarlar.
+    ///
+    /// @dev SIFIR ADRES KASITLI OLARAK GEÇERLİ: "guardian yok" anlamına gelir
+    ///      ve `_verifyAttestation` bunu açıkça ele alır
+    ///      (`if (guardianSigner == address(0)) return (0, false)`).
+    ///      Guardian imzası kaynağını devre dışı bırakmanın tek yolu budur;
+    ///      sıfır kontrolü eklemek o yeteneği ortadan kaldırırdı.
+    // slither-disable-next-line missing-zero-check
     function setGuardianSigner(address newSigner) external onlyOwnerOrSelf {
         address previous = guardianSigner;
         guardianSigner = newSigner;
         emit GuardianSignerUpdated(previous, newSigner);
+    }
+
+    /**
+     * @notice Sahipliği yeni bir adrese devreder.
+     *
+     * @dev Bu fonksiyon Slither'ın `immutable-states` bulgusu üzerine eklendi.
+     *      Slither `owner`'ın hiç yeniden atanmadığını, dolayısıyla
+     *      `immutable` yapılabileceğini söylüyordu — teknik olarak doğruydu.
+     *
+     *      Ama `immutable` yapmak yanlış çözümdü: `owner` bu sözleşmede 11
+     *      fonksiyonu kapılıyor ve bir AKILLI HESAP'ta sahip anahtarının
+     *      ele geçirilmesi gerçek bir senaryodur. Sahipliği kalıcı olarak
+     *      dondurmak, ele geçirilmiş bir anahtardan kurtulma yolunu da
+     *      kapatırdı.
+     *
+     *      Doğru çözüm alanı gerçekten değiştirilebilir kılmaktı. Eksik olan
+     *      şey gaz optimizasyonu değil, devir yeteneğiydi.
+     */
+    function transferOwnership(address newOwner) external onlyOwnerOrSelf {
+        require(newOwner != address(0), "QAdaptiveAccount: new owner is zero");
+        address previous = owner;
+        owner = newOwner;
+        emit OwnershipTransferred(previous, newOwner);
+    }
+
+    /**
+     * @notice AI Core oracle adresini günceller.
+     *
+     * @dev Aynı gerekçe: oracle sabitlenirse, oracle sözleşmesi
+     *      kullanımdan kalktığında ya da ele geçirildiğinde hesap kurtarılamaz
+     *      hâle gelirdi. Risk skorunun kaynağı değiştirilebilir olmalı.
+     */
+    function setAICore(address newAICore) external onlyOwnerOrSelf {
+        require(newAICore != address(0), "QAdaptiveAccount: aiCore is zero");
+        address previous = address(aiCore);
+        aiCore = IAICore(newAICore);
+        emit AICoreUpdated(previous, newAICore);
     }
 
     /**
