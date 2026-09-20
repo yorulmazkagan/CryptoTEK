@@ -31,6 +31,9 @@
 // yapısal olarak imkânsız hâle gelir.
 // =============================================================================
 
+use std::time::Instant;
+
+use serde::{Deserialize, Serialize};
 use winterfell::math::fields::f128::BaseElement;
 use winterfell::TraceTable;
 
@@ -40,6 +43,61 @@ use crate::pqc::{self, PqcSignatureRecord};
 use crate::trace::{
     Dilithium5InjectionPayload, MlDsaSecurityLevel, QAdaptiveTrace, TRACE_LENGTH, TRACE_WIDTH,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Aşama Kaydı — "arkada ne oluyor" sorusunun veri karşılığı
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Boru hattındaki tek bir aşamanın ölçülmüş kaydı.
+///
+/// Arayüzdeki adım adım şerit doğrudan bu listeden beslenir. Her aşama kendi
+/// süresini taşır; hiçbiri tahmin edilmez ya da elle yazılmaz.
+///
+/// **Neden gerekli:** "AI kararı kriptografiyi sürüklüyor" iddiasını jüriye
+/// göstermenin yolu, zincirin her halkasının gerçekten koştuğunu ve ne kadar
+/// sürdüğünü görünür kılmaktan geçiyor. Bu liste olmadan arayüz yalnızca
+/// başlangıç ve bitiş değerlerini gösterebilirdi.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct StageRecord {
+    /// Aşamanın makine-okunur adı (arayüz bunu etikete çevirir).
+    pub name: String,
+    /// Ölçülen süre (milisaniye).
+    pub ms: f64,
+    /// Aşama başarıyla tamamlandı mı?
+    pub ok: bool,
+    /// Kısa, insan-okunur ayrıntı (ör. "8×7 = 56 eleman").
+    pub detail: String,
+}
+
+impl StageRecord {
+    fn yeni(name: &str, baslangic: Instant, detail: impl Into<String>) -> Self {
+        Self {
+            name: name.to_string(),
+            ms: baslangic.elapsed().as_secs_f64() * 1000.0,
+            ok: true,
+            detail: detail.into(),
+        }
+    }
+}
+
+/// Kafes matrisinin arayüze taşınabilir anlık görüntüsü.
+///
+/// Matris en fazla 8×7 = 56 eleman olduğu için tamamı payload'a sığar.
+/// Hücreler **dize olarak** serileştirilir: `u128` değerleri JSON sayı
+/// aralığını aşabilir ve JavaScript tarafında sessizce hassasiyet kaybederdi.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct LatticeSnapshot {
+    /// Matris satır sayısı (k).
+    pub k: usize,
+    /// Matris sütun sayısı (ℓ).
+    pub ell: usize,
+    /// Toplam eleman sayısı (k × ℓ) — arayüz ızgarayı buna göre çizer.
+    pub cell_count: usize,
+    /// Hücre değerleri, satır satır, dize olarak.
+    pub cells: Vec<Vec<String>>,
+    /// Matrisin skalar taahhüdü.
+    pub commitment: String,
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Koşu Girdisi
@@ -107,6 +165,14 @@ pub struct RunOutcome {
     pub pqc: Option<PqcSignatureRecord>,
     /// Koşu tam deterministik miydi? (`fresh_entropy` verilmediyse `true`)
     pub deterministic: bool,
+    /// Bu koşuda yürütülen aşamaların ölçülmüş kaydı.
+    ///
+    /// Normal modda yalnızca karar aşamaları bulunur (kafes ve imza
+    /// üretilmediği için onların aşamaları yoktur). Kanıt akışında
+    /// `main.rs` bu listeye STARK aşamalarını da ekler.
+    pub stages: Vec<StageRecord>,
+    /// Kafes matrisinin anlık görüntüsü (kanıt üretilmediyse `None`).
+    pub lattice: Option<LatticeSnapshot>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -120,8 +186,24 @@ pub struct RunOutcome {
 /// diskteki eski bir kanıtı okumamalıdır** — API katmanındaki o davranış
 /// (bayat dosya geri dönüşü) kaldırılmıştır.
 pub fn run(request: &RunRequest) -> Result<RunOutcome, String> {
-    let decision = armor::decide(request.risk_score, request.tau, request.baseline);
+    let mut stages: Vec<StageRecord> = Vec::new();
 
+    // ── Aşama: zırh kararı ──────────────────────────────────────────────────
+    let t = Instant::now();
+    let decision = armor::decide(request.risk_score, request.tau, request.baseline);
+    stages.push(StageRecord::yeni(
+        "armor_karari",
+        t,
+        format!(
+            "risk {:.2} vs τ {:.2} → {}",
+            request.risk_score,
+            request.tau,
+            decision.level.name()
+        ),
+    ));
+
+    // ── Aşama: ρ' türetimi ──────────────────────────────────────────────────
+    let t = Instant::now();
     let rho_prime = match request.rho_override {
         Some(seed) => seed,
         None => hashing::derive_rho_prime(
@@ -131,6 +213,15 @@ pub fn run(request: &RunRequest) -> Result<RunOutcome, String> {
             request.fresh_entropy.as_ref(),
         ),
     };
+    stages.push(StageRecord::yeni(
+        "rho_turetimi",
+        t,
+        if request.rho_override.is_some() {
+            "dışarıdan verildi".to_string()
+        } else {
+            format!("BLAKE3 → {}…", &hex::encode(&rho_prime[..8]))
+        },
+    ));
 
     if !decision.proof_required {
         return Ok(RunOutcome {
@@ -139,10 +230,36 @@ pub fn run(request: &RunRequest) -> Result<RunOutcome, String> {
             payload: None,
             pqc: None,
             deterministic: request.fresh_entropy.is_none(),
+            stages,
+            lattice: None,
         });
     }
 
+    // ── Aşama: kafes genişletme (kısa tohum türetimi dahil) ─────────────────
+    let t = Instant::now();
     let payload = Dilithium5InjectionPayload::from_rho_prime(rho_prime, decision.level);
+    stages.push(StageRecord::yeni(
+        "kafes_genisletme",
+        t,
+        format!(
+            "{}×{} = {} eleman (SHAKE-128)",
+            payload.config.k,
+            payload.config.ell,
+            payload.config.matrix_elements()
+        ),
+    ));
+
+    let lattice = LatticeSnapshot {
+        k: payload.config.k,
+        ell: payload.config.ell,
+        cell_count: payload.config.matrix_elements(),
+        cells: payload
+            .matrix_a
+            .iter()
+            .map(|satir| satir.iter().map(|h| h.to_string()).collect())
+            .collect(),
+        commitment: payload.lattice_commitment.to_string(),
+    };
 
     // İmzalanan mesaj: bu koşuyu benzersiz kılan bağlam.
     // Aynı ρ' ile farklı bir UserOperation imzalanırsa imza da farklı olur.
@@ -154,7 +271,48 @@ pub fn run(request: &RunRequest) -> Result<RunOutcome, String> {
         decision.level.name(),
     );
 
+    // ── Aşamalar: ML-DSA keygen · imzalama · doğrulama · kurcalama testi ────
+    //
+    // `sign_and_verify` dördünü de kendi içinde ölçüyor; burada tek tek
+    // aşama kaydına çevriliyor. Böylece arayüz "hangi adım pahalı?" sorusunu
+    // cevaplayabiliyor — ML-DSA'da bu genellikle keygen'dir.
     let pqc_record = pqc::sign_and_verify(&rho_prime, decision.level, mesaj.as_bytes())?;
+
+    stages.push(StageRecord {
+        name: "mldsa_keygen".to_string(),
+        ms: pqc_record.keygen_ms,
+        ok: true,
+        detail: format!(
+            "pk {} B · sk {} B",
+            pqc_record.public_key_len, pqc_record.secret_key_len
+        ),
+    });
+    stages.push(StageRecord {
+        name: "mldsa_imzalama".to_string(),
+        ms: pqc_record.sign_ms,
+        ok: true,
+        detail: format!("imza {} B", pqc_record.signature_len),
+    });
+    stages.push(StageRecord {
+        name: "mldsa_dogrulama".to_string(),
+        ms: pqc_record.verify_ms,
+        ok: pqc_record.verified,
+        detail: if pqc_record.verified {
+            "imza geçerli".to_string()
+        } else {
+            "DOĞRULANAMADI".to_string()
+        },
+    });
+    stages.push(StageRecord {
+        name: "kurcalama_testi".to_string(),
+        ms: pqc_record.tamper_ms,
+        ok: pqc_record.tamper_rejected,
+        detail: if pqc_record.tamper_rejected {
+            "kurcalanmış mesaj reddedildi".to_string()
+        } else {
+            "KURCALAMA KABUL EDİLDİ".to_string()
+        },
+    });
 
     Ok(RunOutcome {
         decision,
@@ -162,6 +320,8 @@ pub fn run(request: &RunRequest) -> Result<RunOutcome, String> {
         payload: Some(payload),
         pqc: Some(pqc_record),
         deterministic: request.fresh_entropy.is_none(),
+        stages,
+        lattice: Some(lattice),
     })
 }
 
@@ -359,6 +519,110 @@ mod tests {
             ra.rho_prime, rb.rho_prime,
             "farklı UserOperation farklı ρ' vermeli"
         );
+    }
+
+    /// Aşamalar beklenen sırayla kaydediliyor.
+    ///
+    /// Arayüzdeki adım adım şerit bu sıraya güveniyor. Bir aşama eklenir,
+    /// çıkarılır ya da yeri değişirse bu test kırılır ve arayüzün hangi
+    /// adımı gösterdiği belirsiz kalmaz.
+    #[test]
+    fn asamalar_sirayla_kaydediliyor() {
+        let panik = run(&istek(95.0, 75.0)).unwrap();
+        let adlar: Vec<&str> = panik.stages.iter().map(|s| s.name.as_str()).collect();
+
+        assert_eq!(
+            adlar,
+            vec![
+                "armor_karari",
+                "rho_turetimi",
+                "kafes_genisletme",
+                "mldsa_keygen",
+                "mldsa_imzalama",
+                "mldsa_dogrulama",
+                "kurcalama_testi",
+            ]
+        );
+
+        // Normal modda kripto aşamaları hiç koşmaz — uydurulmuş aşama olmamalı.
+        let normal = run(&istek(50.0, 75.0)).unwrap();
+        let normal_adlar: Vec<&str> = normal.stages.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(normal_adlar, vec!["armor_karari", "rho_turetimi"]);
+    }
+
+    /// Ölçülmeyen bir aşama listede yer ALMAMALI.
+    ///
+    /// "payload_yazma" bir aşama olarak eklenmişti ama kendi süresini kendi
+    /// yazdığı dosyaya koyamadığı için her koşuda 0.000 ms yazıyordu.
+    /// Ölçülmemiş bir şeyi ölçülmüş gibi göstermek, bu denetimin kapattığı
+    /// hata sınıfının ta kendisi — o yüzden kaldırıldı ve bu test geri
+    /// gelmesini engelliyor.
+    #[test]
+    fn olculmeyen_asama_listeye_girmiyor() {
+        let sonuc = run(&istek(95.0, 75.0)).unwrap();
+
+        assert!(
+            !sonuc.stages.iter().any(|s| s.name == "payload_yazma"),
+            "payload_yazma aşaması geri gelmiş — süresi ölçülemiyor"
+        );
+    }
+
+    #[test]
+    fn asama_sureleri_makul() {
+        let sonuc = run(&istek(95.0, 75.0)).unwrap();
+
+        for asama in &sonuc.stages {
+            assert!(
+                asama.ms >= 0.0,
+                "{} süresi negatif: {}",
+                asama.name,
+                asama.ms
+            );
+            assert!(
+                asama.ms < 10_000.0,
+                "{} süresi mantıksız: {} ms",
+                asama.name,
+                asama.ms
+            );
+            assert!(asama.ok, "{} başarısız: {}", asama.name, asama.detail);
+            assert!(!asama.detail.is_empty(), "{} ayrıntısı boş", asama.name);
+        }
+    }
+
+    /// Kurcalama testi CANLI hatta koşuyor — testte değil.
+    #[test]
+    fn kurcalama_testi_canli_hatta_kosuyor() {
+        let sonuc = run(&istek(95.0, 75.0)).unwrap();
+
+        let kurcalama = sonuc
+            .stages
+            .iter()
+            .find(|s| s.name == "kurcalama_testi")
+            .expect("kurcalama_testi aşaması yok");
+
+        assert!(kurcalama.ok, "kurcalama reddedilmedi");
+        assert!(sonuc.pqc.as_ref().unwrap().tamper_rejected);
+    }
+
+    /// Kafes matrisi arayüze taşınabilir hâlde payload'a giriyor.
+    #[test]
+    fn kafes_payloadda_tasiniyor() {
+        for (risk, k, ell) in [(76.0, 4, 4), (82.0, 6, 5), (95.0, 8, 7)] {
+            let sonuc = run(&istek(risk, 75.0)).unwrap();
+            let kafes = sonuc.lattice.as_ref().expect("kafes anlık görüntüsü yok");
+
+            assert_eq!((kafes.k, kafes.ell), (k, ell));
+            assert_eq!(kafes.cell_count, k * ell);
+            assert_eq!(kafes.cells.len(), k);
+            assert!(kafes.cells.iter().all(|satir| satir.len() == ell));
+
+            // Hücreler DİZE olmalı: u128 değerleri JSON sayı aralığını aşabilir
+            // ve JavaScript tarafında sessizce hassasiyet kaybederdi.
+            assert!(kafes.cells[0][0].parse::<u128>().is_ok());
+        }
+
+        // Kanıt üretilmeyen koşuda kafes de olmamalı — boş ızgara gösterilmesin.
+        assert!(run(&istek(50.0, 75.0)).unwrap().lattice.is_none());
     }
 
     /// Taban kademe kanıt akışında da korunuyor mu?

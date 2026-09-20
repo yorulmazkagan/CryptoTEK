@@ -436,6 +436,11 @@ fn export_payload(
         public_key_commitment_hex: hex::encode(k.public_key_commitment),
         signature_prefix_hex: k.signature_prefix_hex.clone(),
         signature_verified: k.verified,
+        keygen_ms: k.keygen_ms,
+        sign_ms: k.sign_ms,
+        verify_ms: k.verify_ms,
+        tamper_rejected: k.tamper_rejected,
+        tamper_ms: k.tamper_ms,
     });
 
     // Calldata tasarrufu, bu kademedeki GERÇEK imza boyutundan hesaplanır.
@@ -461,6 +466,9 @@ fn export_payload(
         },
         pqc: pqc_ozet,
         calldata,
+        // Aşamalar `outcome`'dan gelir; STARK aşamaları main akışında eklendi.
+        stages: outcome.stages.clone(),
+        lattice: outcome.lattice.clone(),
     };
 
     if let Some(c) = &extras.calldata {
@@ -726,8 +734,18 @@ fn main() {
 
     let level_name = outcome.decision.level.name();
 
-    // Adım 2: Kafes + gerçek ML-DSA imzası + iz tablosu (tek kaynak).
+    // `outcome` artık aşama listesini taşıyor; STARK aşamaları burada eklenecek.
+    let mut outcome = outcome;
+
+    // ── Aşama: iz tablosu ───────────────────────────────────────────────────
+    let t_iz = Instant::now();
     let trace = build_trace_for_display_and_proof(&outcome);
+    outcome.stages.push(pipeline::StageRecord {
+        name: "iz_tablosu".to_string(),
+        ms: t_iz.elapsed().as_secs_f64() * 1000.0,
+        ok: true,
+        detail: format!("{} satır × {} sütun", TRACE_LENGTH, TRACE_WIDTH),
+    });
 
     // Genel girdileri çıkar
     let last_step = trace.length() - 1;
@@ -750,6 +768,7 @@ fn main() {
 
     let options = get_proof_options();
 
+    // ── Aşama: STARK prover ─────────────────────────────────────────────────
     // Adım 3: STARK Kanıtı Üret (Result propagasyon — program crash yok)
     let (proof, prover_ms) = match generate_proof(trace, options) {
         Ok(p) => p,
@@ -759,10 +778,32 @@ fn main() {
             std::process::exit(2);
         }
     };
+    outcome.stages.push(pipeline::StageRecord {
+        name: "stark_prover".to_string(),
+        ms: prover_ms,
+        ok: true,
+        detail: format!("{} bayt kanıt", proof.to_bytes().len()),
+    });
 
+    // ── Aşama: yerel doğrulama ──────────────────────────────────────────────
     // Adım 4: Doğrula
+    let t_dogrula = Instant::now();
     let verified_proof = verify_proof(proof, pub_inputs_verify);
+    outcome.stages.push(pipeline::StageRecord {
+        name: "stark_dogrulama".to_string(),
+        ms: t_dogrula.elapsed().as_secs_f64() * 1000.0,
+        ok: true,
+        detail: format!("{} bit konjektürel", air::STARK_SECURITY_BITS),
+    });
 
+    // NOT: "payload yazma" bilinçli olarak bir AŞAMA DEĞİL.
+    //
+    // Bir aşama kendi süresini kendi yazdığı dosyaya koyamaz — ölçüm, yazma
+    // işleminden önce bitmek zorunda kalır ve her koşuda 0.000 ms yazardı.
+    // Ölçülmemiş bir şeyi ölçülmüş gibi göstermektense listeden çıkarıldı;
+    // arayüz bu adımı süre iddiası olmadan bir tamamlanma işareti olarak
+    // gösterir.
+    //
     // Adım 5: Köprü (JSON Export — ölçümler dahil)
     export_payload(
         &request,
@@ -979,7 +1020,14 @@ mod tests {
                     public_key_commitment_hex: hex::encode(kayit.public_key_commitment),
                     signature_prefix_hex: kayit.signature_prefix_hex.clone(),
                     signature_verified: kayit.verified,
+                    keygen_ms: kayit.keygen_ms,
+                    sign_ms: kayit.sign_ms,
+                    verify_ms: kayit.verify_ms,
+                    tamper_rejected: kayit.tamper_rejected,
+                    tamper_ms: kayit.tamper_ms,
                 }),
+                stages: outcome.stages.clone(),
+                lattice: outcome.lattice.clone(),
                 calldata: Some(bridge::CalldataRecord::compute(
                     bridge::CalldataRecord::DEFAULT_BATCH_SIZE,
                     kayit.signature_len,

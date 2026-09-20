@@ -62,6 +62,19 @@ jobs:
       - name: "Guardian attestation kripto birim testleri (18 test)"
         run: python test_attestation.py
 
+      # Arayüzün API'de OLMAYAN bir alana baglanmasini engeller.
+      #
+      # Arayuzdeki her bagli alan `data-bind="pqc_detail.signature_bytes"`
+      # biciminde isaretli; bu test o yollari HTML'den okuyup Pydantic yanit
+      # modelinde gercekten var olduklarini dogrular. Ayrica eski arayuzun
+      # uydurma sayilarinin (3.85, 98.52, 56.4) geri gelmedigini ve CDN
+      # bagimliligi eklenmedigini sinar.
+      #
+      # Bu, denetimin asil dersinin otomatiklestirilmis hali: belge/arayuz,
+      # kodda olmayan bir seyi iddia edemesin.
+      - name: "API ↔ arayüz sözleşme testi"
+        run: python test_api_contract.py
+
       # `test_api_client.py` de bir betik, pytest paketi değil — ve ÇALIŞAN BİR
       # SUNUCU gerektiriyor. Sunucu ayağa kaldırılmadan çağrılırsa bağlantı
       # hatası verir. Bu yüzden sunucu arka planda başlatılıp hazır olması

@@ -1,0 +1,1538 @@
+<!DOCTYPE html>
+<html class="light" lang="tr">
+<head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+  <title>Q-ADAPTIVE AI Guardian v2.4</title>
+  <meta name="description" content="Post-kuantum akıllı güvenlik katmanı — gerçek zamanlı AI anomali tespiti, ZK-STARK kriptografik kanıtlama ve EVM on-chain izleme."/>
+
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Inter:wght@400;500&display=swap" rel="stylesheet"/>
+
+  <!-- Tailwind CDN -->
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <script id="tw-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "surface": "#f8f9ff",
+            "surface-container": "#e5eeff",
+            "surface-container-low": "#eff4ff",
+            "surface-container-high": "#dce9ff",
+            "surface-container-highest": "#d3e4fe",
+            "surface-container-lowest": "#ffffff",
+            "surface-variant": "#d3e4fe",
+            "on-surface": "#0b1c30",
+            "on-surface-variant": "#3d494c",
+            "primary": "#00687a",
+            "primary-container": "#06b6d4",
+            "on-primary": "#ffffff",
+            "on-primary-container": "#00424f",
+            "inverse-primary": "#4cd7f6",
+            "secondary": "#006c49",
+            "secondary-container": "#6cf8bb",
+            "on-secondary": "#ffffff",
+            "tertiary": "#bc0b3b",
+            "tertiary-container": "#ff7f8b",
+            "on-tertiary": "#ffffff",
+            "error": "#ba1a1a",
+            "error-container": "#ffdad6",
+            "on-error": "#ffffff",
+            "outline": "#6d797d",
+            "outline-variant": "#bcc9cd",
+            "inverse-surface": "#213145",
+            "inverse-on-surface": "#eaf1ff",
+          },
+          fontFamily: {
+            "geist": ["Geist", "sans-serif"],
+            "inter": ["Inter", "sans-serif"],
+          },
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* ── Base ───────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: "Inter", sans-serif; background: #f8f9ff; color: #0b1c30; }
+
+    /* ── Glass ─────────────────────────────────────────────────── */
+    .glass {
+      background: rgba(255,255,255,0.72);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(226,232,240,0.55);
+    }
+    .glass-dark {
+      background: rgba(33,49,69,0.92);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    /* ── Neon Accents ───────────────────────────────────────────── */
+    .neon-safe   { box-shadow: 0 0 18px rgba(6,182,212,0.13); }
+    .neon-panic  { box-shadow: 0 0 24px rgba(244,63,94,0.25); }
+    .neon-div    { height:2px; background:linear-gradient(to right,#06b6d4,transparent); }
+    .neon-div-panic { height:2px; background:linear-gradient(to right,#ba1a1a,transparent); }
+
+    /* ── Pulse animations ───────────────────────────────────────── */
+    @keyframes safePulse {
+      0%,100% { box-shadow: 0 0 10px rgba(6,182,212,0.2); }
+      50%     { box-shadow: 0 0 22px rgba(6,182,212,0.45); }
+    }
+    @keyframes panicPulse {
+      0%,100% { box-shadow: 0 0 14px rgba(244,63,94,0.3); border-color: rgba(244,63,94,0.55); }
+      50%     { box-shadow: 0 0 32px rgba(244,63,94,0.65); border-color: rgba(244,63,94,1); }
+    }
+    .safe-pulse  { animation: safePulse  3s infinite; }
+    .panic-pulse { animation: panicPulse 1.1s infinite; }
+
+    /* ── Nav active tab ─────────────────────────────────────────── */
+    .nav-link { @apply flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-slate-100/60 transition-all active:scale-95 duration-150 cursor-pointer; }
+    .nav-link.active { @apply text-primary font-bold border-r-2 border-primary bg-primary-container/20; }
+
+    /* ── Tab panels ─────────────────────────────────────────────── */
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── Risk gauge center text ─────────────────────────────────── */
+    .gauge-wrap { position:relative; width:192px; height:192px; margin:0 auto; }
+    .gauge-center {
+      position:absolute; inset:0;
+      display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+      pointer-events:none;
+    }
+
+    /* ── Metric bar ─────────────────────────────────────────────── */
+    .metric-bar { height:4px; border-radius:9999px; background:#e2e8f0; overflow:hidden; }
+    .metric-fill { height:100%; border-radius:9999px; transition: width .6s cubic-bezier(.4,0,.2,1), background-color .4s; }
+
+    /* ── Terminal log ───────────────────────────────────────────── */
+    #terminal-log {
+      font-family: "Geist", monospace; font-size: 12px;
+      height: 128px; overflow-y: auto; background: rgba(0,0,0,0.5);
+      border-radius: 6px; padding: 10px; color: #94a3b8;
+      border: 1px solid rgba(30,41,59,0.8);
+    }
+    #terminal-log::-webkit-scrollbar { width:4px; }
+    #terminal-log::-webkit-scrollbar-track { background: transparent; }
+    #terminal-log::-webkit-scrollbar-thumb { background: #334155; border-radius:4px; }
+
+    /* ── Node grid matrix ───────────────────────────────────────── */
+    .matrix-cell {
+      height:32px; border-radius:4px;
+      background:rgba(6,182,212,0.08);
+      border:1px solid rgba(6,182,212,0.18);
+      display:flex; align-items:center; justify-content:center;
+      font-size:9px; font-family:"Geist",monospace; color:rgba(0,104,122,0.6);
+      transition: background .3s;
+    }
+    .matrix-cell:hover { background: rgba(6,182,212,0.2); }
+    .matrix-cell.panic { background:rgba(186,26,26,0.08); border-color:rgba(186,26,26,0.2); color:rgba(186,26,26,0.6); }
+
+    /* ── On-chain countdown ─────────────────────────────────────── */
+    #countdown-display { font-family:"Geist",monospace; letter-spacing: -0.02em; }
+
+    /* ── Glint button animation ─────────────────────────────────── */
+    @keyframes glint { 100% { left: 200%; } }
+    .btn-fire-glint { position:absolute; top:0; left:-60%; height:100%; width:40%; background:linear-gradient(to right,transparent,rgba(255,255,255,0.18),transparent); transform:skewX(-12deg); }
+    .btn-fire:hover .btn-fire-glint { animation: glint 1.2s ease-in-out infinite; }
+
+    /* ── Table row fade-in ──────────────────────────────────────── */
+    @keyframes rowIn { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:translateY(0); } }
+    .log-row-new { animation: rowIn .35s ease forwards; }
+
+    /* ── Grid bg ────────────────────────────────────────────────── */
+    .grid-bg {
+      background-image: linear-gradient(to right,#80808010 1px,transparent 1px),
+                        linear-gradient(to bottom,#80808010 1px,transparent 1px);
+      background-size: 24px 24px;
+    }
+  </style>
+</head>
+
+<body class="min-h-screen overflow-x-hidden antialiased">
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     AMBIENT BACKGROUND
+══════════════════════════════════════════════════════════════════════════ -->
+<div class="fixed inset-0 grid-bg pointer-events-none z-0"></div>
+<div class="fixed top-0 left-[20%] w-[700px] h-[700px] bg-primary/5 rounded-full blur-[110px] pointer-events-none -z-10 mix-blend-multiply"></div>
+<div class="fixed bottom-0 right-0 w-[500px] h-[500px] bg-secondary/5 rounded-full blur-[90px] pointer-events-none -z-10 mix-blend-multiply"></div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     NETWORK-DOWN BANNER (hidden by default, shown on AbortError/network error)
+══════════════════════════════════════════════════════════════════════════ -->
+<div id="net-down-banner" class="hidden fixed top-4 left-1/2 -translate-x-1/2 z-[200] glass border border-error/40 rounded-xl px-6 py-3 flex items-center gap-3 shadow-xl" style="min-width:360px; max-width:560px; background: rgba(186,26,26,0.08);">
+  <span class="material-symbols-outlined text-error text-xl flex-shrink-0">wifi_off</span>
+  <p id="net-down-msg" class="font-geist text-xs text-error font-semibold flex-1">Backend'e ulaşılamıyor</p>
+  <button onclick="document.getElementById('net-down-banner').classList.add('hidden')" class="text-error/60 hover:text-error transition-colors ml-2 flex-shrink-0" aria-label="Kapat">
+    <span class="material-symbols-outlined text-base">close</span>
+  </button>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SIDE NAV
+══════════════════════════════════════════════════════════════════════════ -->
+<aside class="glass fixed left-0 top-0 h-screen w-64 z-50 flex flex-col py-6 px-4 shadow-[0_0_20px_rgba(0,104,122,0.1)]">
+  <!-- Brand -->
+  <div class="mb-8 px-2 flex items-center gap-3">
+    <div class="w-10 h-10 rounded-full bg-primary-container/20 border border-primary/30 flex items-center justify-center">
+      <span class="material-symbols-outlined text-primary text-xl">security</span>
+    </div>
+    <div>
+      <h1 class="font-geist font-bold text-primary text-xl tracking-tight leading-tight">Q-ADAPTIVE</h1>
+      <p class="font-geist text-xs text-on-surface-variant/70">AI Guardian v2.4</p>
+    </div>
+  </div>
+
+  <!-- Nav Links -->
+  <nav class="flex flex-col gap-1 flex-1">
+    <button id="nav-telemetri"   class="nav-link active"  onclick="switchTab('telemetri')">
+      <span class="material-symbols-outlined text-[20px]">radar</span>
+      <span class="font-geist text-sm">Canlı Telemetri</span>
+    </button>
+    <button id="nav-simulasyon" class="nav-link" onclick="switchTab('simulasyon')">
+      <span class="material-symbols-outlined text-[20px]">terminal</span>
+      <span class="font-geist text-sm">Simülasyon Enjektörü</span>
+    </button>
+    <button id="nav-zkstark"    class="nav-link" onclick="switchTab('zkstark')">
+      <span class="material-symbols-outlined text-[20px]">security</span>
+      <span class="font-geist text-sm">ZK-STARK Mantığı</span>
+    </button>
+    <button id="nav-onchain"    class="nav-link" onclick="switchTab('onchain')">
+      <span class="material-symbols-outlined text-[20px]">back_hand</span>
+      <span class="font-geist text-sm">Zincir İçi İzleyici</span>
+    </button>
+  </nav>
+
+  <!-- Footer button -->
+  <div class="mt-auto">
+    <div id="nav-network-btn" class="w-full py-3 rounded-lg bg-secondary/10 text-secondary border border-secondary/20 font-geist text-xs font-bold flex items-center justify-center gap-2 transition-colors">
+      <span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+      <span id="nav-net-txt">NETWORK SECURE</span>
+    </div>
+  </div>
+</aside>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     TOP NAV
+══════════════════════════════════════════════════════════════════════════ -->
+<header id="top-nav" class="glass fixed top-0 right-0 left-64 h-16 z-40 border-b border-slate-200/50 shadow-[0_0_15px_rgba(6,182,212,0.12)] flex items-center justify-between px-8 transition-all duration-300">
+  <div class="flex items-center gap-4">
+    <span class="font-geist font-bold text-primary text-xl tracking-tight">Q-ADAPTIVE</span>
+    <div class="h-5 w-px bg-slate-300"></div>
+    <!-- Dynamic status banner -->
+    <div id="status-banner" class="flex items-center gap-2 px-4 py-1.5 rounded-full border border-secondary/30 shadow-[0_0_10px_rgba(0,108,73,0.2)] bg-surface-container transition-all duration-300">
+      <span class="material-symbols-outlined text-secondary text-base" id="status-icon" style="font-variation-settings:'FILL' 1">shield</span>
+      <span id="status-text" class="font-geist text-xs font-bold text-secondary uppercase tracking-wider">SİSTEM GÜVENLİ — LIGHT ARMOR ACTIVE (ML-DSA-44)</span>
+    </div>
+  </div>
+  <div class="flex items-center gap-3">
+    <button class="text-on-surface-variant hover:text-primary transition-all p-2 rounded-full relative">
+      <span class="material-symbols-outlined">notifications</span>
+      <span class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-tertiary"></span>
+    </button>
+    <button class="text-on-surface-variant hover:text-primary transition-all p-2 rounded-full">
+      <span class="material-symbols-outlined">account_circle</span>
+    </button>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     MAIN CONTENT
+══════════════════════════════════════════════════════════════════════════ -->
+<main class="ml-64 mt-16 p-8 pb-24 min-h-[calc(100vh-4rem)] relative z-10">
+
+  <!-- ════════════════════════════════════════════════════════════
+       TAB 1: CANLI TELEMETRİ
+  ════════════════════════════════════════════════════════════════ -->
+  <section id="tab-telemetri" class="tab-panel active">
+    <!-- Header -->
+    <div class="mb-6 flex flex-col gap-1">
+      <h2 class="font-geist font-semibold text-2xl text-on-surface tracking-tight">Canlı Telemetri Paneli</h2>
+      <p class="text-on-surface-variant text-sm">Gerçek zamanlı AI risk analizi, ZK-STARK kanıtlama durumu ve on-chain olay akışı.</p>
+      <div class="neon-div w-1/3 mt-2 rounded-full opacity-60"></div>
+    </div>
+
+    <!-- Row 1: Risk Gauge + 3 Metric Dials -->
+    <div class="grid grid-cols-1 md:grid-cols-12 gap-6 mb-6">
+      <!-- Risk Gauge -->
+      <div id="risk-card" class="md:col-span-4 glass neon-safe rounded-xl p-6 relative overflow-hidden safe-pulse">
+        <div id="risk-neon" class="neon-div absolute top-0 left-0 right-0"></div>
+        <h3 class="font-geist font-semibold text-lg text-on-surface mb-1">Yapay Zeka Risk Skoru</h3>
+        <p class="font-geist text-xs text-outline flex items-center gap-1 mb-4">
+          <span class="material-symbols-outlined text-sm">analytics</span> Gerçek Zamanlı ONNX Analizi
+        </p>
+        <div class="gauge-wrap">
+          <canvas id="riskGauge" width="192" height="192"></canvas>
+          <div class="gauge-center">
+            <span id="risk-value-display" class="font-geist font-bold text-5xl text-primary transition-colors duration-300">0</span>
+            <span class="font-geist text-sm text-outline">%</span>
+          </div>
+        </div>
+        <div class="mt-4 text-center">
+          <span id="risk-label-badge" class="px-3 py-1 rounded-full text-xs font-geist font-bold bg-secondary/10 text-secondary border border-secondary/30 transition-all duration-300">SAFE</span>
+        </div>
+        <!-- Dynamic threshold line indicator -->
+        <div class="mt-3 border-t border-slate-200/40 pt-3 flex items-center justify-between">
+          <span class="font-geist text-[10px] text-outline uppercase tracking-wider">Dinamik Eşik τ(t)</span>
+          <span id="tele-tau-value" class="font-geist text-xs font-bold text-primary">—%</span>
+        </div>
+      </div>
+
+      <!-- 3 Metric Dials + Variance row -->
+      <div class="md:col-span-8 flex flex-col gap-4">
+        <!-- Variance Pills row -->
+        <div class="glass rounded-xl px-5 py-3 flex items-center gap-4 flex-wrap">
+          <span class="font-geist text-[10px] text-outline uppercase tracking-wider">Kayan Pencere Varyansı (σ²)</span>
+          <div id="pill-gas-var" class="var-pill var-pill-safe">
+            <span>σ²_gas</span>
+            <span id="pill-gas-val" class="font-bold">—</span>
+          </div>
+          <div id="pill-freq-var" class="var-pill var-pill-safe">
+            <span>σ²_freq</span>
+            <span id="pill-freq-val" class="font-bold">—</span>
+          </div>
+          <div class="ml-auto flex items-center gap-2">
+            <span class="font-geist text-[10px] text-outline">Pencere doluluk:</span>
+            <div class="h-1.5 w-20 bg-slate-200 rounded-full overflow-hidden">
+              <div id="window-fill-bar" class="h-full bg-primary-container rounded-full transition-all duration-700" style="width:0%"></div>
+            </div>
+            <span id="window-fill-pct" class="font-geist text-[10px] font-bold text-primary">0%</span>
+          </div>
+        </div>
+
+        <!-- 3 Dials grid -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 flex-grow">
+          <!-- Dial: İşlem Sıklığı -->
+        <div class="glass neon-safe rounded-xl p-6 flex flex-col justify-between">
+          <div>
+            <h4 class="font-geist text-xs text-on-surface-variant flex items-center gap-1 uppercase tracking-wider">
+              <span class="material-symbols-outlined text-primary text-base">speed</span> İşlem Sıklığı
+            </h4>
+            <div class="neon-div my-3 opacity-50"></div>
+          </div>
+          <div>
+            <div class="flex items-end gap-2 mb-2">
+              <span id="metric-tx-freq" class="font-geist font-bold text-3xl text-on-surface">—</span>
+              <span class="font-geist text-xs text-outline mb-1">tx/sec</span>
+            </div>
+            <div class="metric-bar mt-2">
+              <div id="metric-tx-bar" class="metric-fill bg-primary" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+        <!-- Dial: IP Sapması -->
+        <div id="ip-card" class="glass neon-safe rounded-xl p-6 flex flex-col justify-between">
+          <div>
+            <h4 class="font-geist text-xs text-on-surface-variant flex items-center gap-1 uppercase tracking-wider">
+              <span id="ip-icon" class="material-symbols-outlined text-primary text-base">location_on</span> IP Lokasyon Sapması
+            </h4>
+            <div id="ip-neon" class="neon-div my-3 opacity-50"></div>
+          </div>
+          <div>
+            <div class="flex items-end gap-2 mb-2">
+              <span id="metric-ip-dev" class="font-geist font-bold text-3xl text-on-surface">—</span>
+              <span class="font-geist text-xs text-outline mb-1">Δ</span>
+            </div>
+            <div class="metric-bar mt-2">
+              <div id="metric-ip-bar" class="metric-fill bg-primary" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+        <!-- Dial: Gas Volatilitesi -->
+        <div class="glass neon-safe rounded-xl p-6 flex flex-col justify-between">
+          <div>
+            <h4 class="font-geist text-xs text-on-surface-variant flex items-center gap-1 uppercase tracking-wider">
+              <span class="material-symbols-outlined text-primary text-base">local_gas_station</span> Gas Volatilitesi
+            </h4>
+            <div class="neon-div my-3 opacity-50"></div>
+          </div>
+          <div>
+            <div class="flex items-end gap-2 mb-2">
+              <span id="metric-gas-vol" class="font-geist font-bold text-3xl text-on-surface">—</span>
+              <span class="font-geist text-xs text-outline mb-1">gwei/Δ</span>
+            </div>
+            <div class="metric-bar mt-2">
+              <div id="metric-gas-bar" class="metric-fill bg-primary" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+        </div>
+      </div>
+    </div> <!-- Close grid-cols-12 -->
+
+    <!-- Row 2: ZK-STARK Section (miniaturized) -->
+    <div class="glass rounded-xl shadow-[0_0_15px_rgba(6,182,212,0.1)] mb-6 overflow-hidden">
+      <div class="neon-div"></div>
+      <div class="p-5 border-b border-slate-200/50 flex justify-between items-center bg-white/30">
+        <div>
+          <h3 class="font-geist font-semibold text-base text-on-surface">Kriptografik ZK-STARK Durumu</h3>
+          <p id="zk-status-line" class="font-geist text-xs text-outline mt-1">Dinleniyor — Panik tetiklendiğinde aktive olur</p>
+        </div>
+        <div class="text-right">
+          <p class="font-geist text-xs text-on-surface-variant">Kanıtlayıcı Zamanı</p>
+          <p id="prover-timer-tele" class="font-geist text-sm font-bold text-primary">—</p>
+        </div>
+      </div>
+      <div class="p-5 grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="text-center">
+          <p class="font-geist text-xs text-outline uppercase tracking-widest mb-1">Zırh Katmanı</p>
+          <p id="tele-armor-tier" class="font-geist font-bold text-primary text-sm">ML-DSA-44 (Hafif)</p>
+        </div>
+        <div class="text-center">
+          <p class="font-geist text-xs text-outline uppercase tracking-widest mb-1">Kanıt Boyutu</p>
+          <p id="tele-proof-size" class="font-geist font-bold text-primary text-sm">—</p>
+        </div>
+        <div class="text-center">
+          <p class="font-geist text-xs text-outline uppercase tracking-widest mb-1">Calldata Emilimi</p>
+          <p id="tele-calldata" class="font-geist font-bold text-secondary text-sm">—</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 3: On-Chain Log Table -->
+    <div id="onchain-panel" class="glass rounded-xl shadow-[0_0_15px_rgba(6,182,212,0.1)] overflow-hidden">
+      <div id="onchain-neon" class="neon-div"></div>
+      <div class="p-5 border-b border-slate-200/50 flex justify-between items-center bg-white/30">
+        <h3 class="font-geist font-semibold text-base text-on-surface flex items-center gap-2">
+          <span class="material-symbols-outlined text-primary">database</span> On-Chain Solidity Olay Akışı
+        </h3>
+        <!-- Time-lock badge (hidden until panic) -->
+        <div id="timelock-container" class="hidden items-center gap-2 bg-error-container border border-error/40 px-3 py-1.5 rounded-lg shadow-[0_0_10px_rgba(244,63,94,0.3)]">
+          <span class="material-symbols-outlined text-error text-base animate-pulse">lock_clock</span>
+          <div>
+            <p class="font-geist text-[10px] text-on-error-container uppercase tracking-widest">Zaman Kilidi</p>
+            <p id="timelock-countdown" class="font-geist font-bold text-error text-sm leading-none">02:00:00</p>
+          </div>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="bg-surface-container text-on-surface-variant font-geist text-xs uppercase tracking-wider border-b border-slate-200/80">
+              <th class="p-4">Zaman Damgası</th>
+              <th class="p-4">Olay Tipi</th>
+              <th class="p-4">Tx Hash</th>
+              <th class="p-4">Risk %</th>
+              <th class="p-4">Durum</th>
+              <th class="p-4">Paymaster</th>
+            </tr>
+          </thead>
+          <tbody id="log-table-body" class="font-geist text-xs text-on-surface">
+            <tr class="border-b border-slate-100 text-on-surface-variant/50">
+              <td colspan="6" class="p-4 text-center">Henüz simülasyon çalıştırılmadı — Simülasyon Enjektörü sekmesini kullanın.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="p-2 bg-slate-50/50 border-t border-slate-200/50 text-center">
+        <p class="font-geist text-[10px] text-outline uppercase tracking-widest">ERC-4337 Paymaster: Panik durumlarında gas maliyetleri otomatik absorbe edilir.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════════
+       TAB 2: SİMÜLASYON ENJEKTÖRܜ
+  ════════════════════════════════════════════════════════════════ -->
+  <section id="tab-simulasyon" class="tab-panel">
+    <div class="mb-6">
+      <h2 class="font-geist font-semibold text-2xl text-on-surface tracking-tight">Siber Saldırı Simülasyon Enjektörü</h2>
+      <p class="text-on-surface-variant text-sm mt-1 max-w-3xl">Enjekte edilecek tehdit vektörünü seçin. FastAPI mikrosersisine JSON payload gönderilir, ONNX IsolationForest çıkarımı yapılır ve risk ≥ 75% ise Rust ZK-STARK kanıt üretimi tetiklenir.</p>
+      <div class="neon-div w-1/3 mt-3 opacity-60 rounded-full"></div>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">
+      <!-- Left: Scenario Cards + Custom Params -->
+      <div class="xl:col-span-8 flex flex-col gap-5">
+        <h3 class="font-geist font-semibold text-lg text-on-surface flex items-center gap-2">
+          <span class="material-symbols-outlined text-primary">science</span> Vektör Parametreleri
+        </h3>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <!-- Card: Standart -->
+          <label class="cursor-pointer relative group">
+            <input id="radio-standart" class="peer sr-only" name="simulation_type" type="radio" value="standart" checked/>
+            <div class="h-full glass border border-slate-200/50 rounded-xl p-6 transition-all duration-300
+              peer-checked:border-primary-container peer-checked:bg-surface-container-low peer-checked:shadow-[0_0_15px_rgba(6,182,212,0.15)]
+              hover:border-primary/40 flex flex-col gap-4 relative overflow-hidden">
+              <div class="w-12 h-12 rounded-lg bg-surface-variant flex items-center justify-center text-primary mb-1">
+                <span class="material-symbols-outlined" style="font-variation-settings:'FILL' 1">person</span>
+              </div>
+              <div>
+                <h4 class="font-geist font-bold text-sm text-on-surface mb-1">Standart Kullanıcı</h4>
+                <span class="text-xs text-on-surface-variant font-geist px-2 py-0.5 bg-white rounded border border-slate-200">DeFi Swap</span>
+              </div>
+              <ul class="text-xs text-on-surface-variant space-y-1 mt-1 border-t border-slate-100 pt-3 flex-grow">
+                <li class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>Islem_Sikligi: <strong>1.1</strong></li>
+                <li class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>IP_Sapmasi: <strong>0.02</strong></li>
+                <li class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-secondary"></span>Gas_Sapmasi: <strong>0.05</strong></li>
+              </ul>
+            </div>
+          </label>
+
+          <!-- Card: Bot Saldırısı -->
+          <label class="cursor-pointer relative group">
+            <input id="radio-bot" class="peer sr-only" name="simulation_type" type="radio" value="bot"/>
+            <div class="h-full glass border border-slate-200/50 rounded-xl p-6 transition-all duration-300
+              peer-checked:border-tertiary-container peer-checked:bg-error-container/20 peer-checked:shadow-[0_0_15px_rgba(255,127,139,0.2)]
+              hover:border-tertiary/40 flex flex-col gap-4 relative overflow-hidden">
+              <div class="w-12 h-12 rounded-lg bg-orange-100/50 flex items-center justify-center text-orange-600 mb-1">
+                <span class="material-symbols-outlined" style="font-variation-settings:'FILL' 1">smart_toy</span>
+              </div>
+              <div>
+                <h4 class="font-geist font-bold text-sm text-on-surface mb-1">Bot Saldırısı</h4>
+                <span class="text-xs text-on-surface-variant font-geist px-2 py-0.5 bg-white rounded border border-slate-200">High-Freq Spam</span>
+              </div>
+              <ul class="text-xs text-on-surface-variant space-y-1 mt-1 border-t border-slate-100 pt-3 flex-grow">
+                <li class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-orange-500"></span>Islem_Sikligi: <strong>50.0</strong></li>
+                <li class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-orange-500"></span>IP_Sapmasi: <strong>0.05</strong></li>
+                <li class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-orange-500"></span>Gas_Sapmasi: <strong>0.1</strong></li>
+              </ul>
+            </div>
+          </label>
+
+          <!-- Card: Drainer (Panic) -->
+          <label class="cursor-pointer relative group">
+            <input id="radio-drainer" class="peer sr-only" name="simulation_type" type="radio" value="drainer"/>
+            <div class="h-full glass border border-slate-200/50 rounded-xl p-6 transition-all duration-300
+              peer-checked:border-tertiary peer-checked:bg-error-container/40 peer-checked:shadow-[0_0_20px_rgba(244,63,94,0.3)]
+              hover:border-tertiary/40 flex flex-col gap-4 relative overflow-hidden">
+              <div class="w-12 h-12 rounded-lg bg-error-container flex items-center justify-center text-tertiary mb-1">
+                <span class="material-symbols-outlined" style="font-variation-settings:'FILL' 1">warning</span>
+              </div>
+              <div>
+                <h4 class="font-geist font-bold text-sm text-on-surface mb-1">Özel Anahtar Çalınması</h4>
+                <span class="text-xs text-on-surface-variant font-geist px-2 py-0.5 bg-white rounded border border-slate-200">Drainer Payload</span>
+              </div>
+              <ul class="text-xs text-on-surface-variant space-y-1 mt-1 border-t border-slate-100 pt-3 flex-grow">
+                <li class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>Islem_Sikligi: <strong>2.0</strong></li>
+                <li class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>IP_Sapmasi: <strong>0.95</strong></li>
+                <li class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>Gas_Sapmasi: <strong>15.5</strong></li>
+              </ul>
+            </div>
+          </label>
+        </div>
+
+        <!-- Advanced Config -->
+        <div class="glass border border-slate-200/50 rounded-xl p-6">
+          <h4 class="font-geist font-bold text-sm text-on-surface mb-4">Gelişmiş Yapılandırma</h4>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="flex flex-col gap-2">
+              <label class="font-geist text-xs text-on-surface-variant uppercase tracking-wider">İşlem Hızı (Tx/s) Override</label>
+              <input id="custom-tx" class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary" max="1000" min="1" type="range" value="50"/>
+              <div class="flex justify-between text-[10px] text-on-surface-variant/60 font-geist mt-1">
+                <span>1</span>
+                <span id="custom-tx-val" class="font-bold text-primary">50</span>
+                <span>1000+</span>
+              </div>
+            </div>
+            <div class="flex flex-col gap-2">
+              <label class="font-geist text-xs text-on-surface-variant uppercase tracking-wider">Hedef Cüzdan (Mock)</label>
+              <input class="bg-slate-100/50 border-0 border-b border-slate-300 focus:border-primary-container focus:ring-0 px-3 py-2 text-xs font-geist text-on-surface transition-colors rounded-none" readonly type="text" value="0x7a2f3e...b4f9"/>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: HUD + Fire Button -->
+      <div class="xl:col-span-4 flex flex-col gap-4">
+        <h3 class="font-geist font-semibold text-lg text-on-surface flex items-center gap-2">
+          <span class="material-symbols-outlined text-primary-container">speed</span> Uçuş Öncesi Telemetri
+        </h3>
+
+        <!-- HUD Panel -->
+        <div class="glass-dark text-inverse-on-surface rounded-xl p-6 border border-slate-700/50 shadow-lg flex-grow flex flex-col font-geist text-sm relative">
+          <div class="absolute top-0 left-0 right-0 h-1/3 bg-gradient-to-b from-white/5 to-transparent pointer-events-none rounded-t-xl"></div>
+          <div class="flex justify-between items-center mb-5 pb-4 border-b border-slate-700/50">
+            <span class="text-slate-400 text-xs">DURUM:</span>
+            <span id="hud-status" class="text-secondary-container animate-pulse text-xs font-bold">ENJEKSİYON BEKLENİYOR</span>
+          </div>
+          <div class="space-y-3 flex-grow">
+            <div class="flex justify-between"><span class="text-slate-400">Endpoint:</span><span class="text-slate-200">POST /api/predict</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Model:</span><span class="text-slate-200">ONNX IsolationForest</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">ZK Trigger:</span><span id="hud-zk-trigger" class="text-slate-200">risk ≥ τ(t)</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">τ(t) Mevcut:</span><span id="hud-tau-val" class="text-primary-container font-bold">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Zırh (şimdiki):</span><span id="hud-armor" class="text-primary-container font-bold">ML-DSA-44</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Son Gecikme:</span><span id="hud-latency" class="text-slate-200">—</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Kuyruk Token:</span><span id="hud-queue-token" class="text-slate-200">—</span></div>
+            <!-- Terminal -->
+            <div id="terminal-log" class="mt-2">
+              <div>> Q-ADAPTIVE API bekleniyor...</div>
+              <div>> Simülasyon enjektörü hazır.</div>
+              <div class="animate-pulse">_</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Fire Button -->
+        <button id="fire-btn" class="btn-fire w-full py-5 rounded-xl font-geist font-bold text-lg transition-all duration-300 bg-tertiary text-white border border-tertiary-container/50 hover:bg-tertiary/90 shadow-[0_0_20px_rgba(244,63,94,0.4)] active:scale-95 flex items-center justify-center gap-3 relative overflow-hidden" onclick="firePrediction()">
+          <div class="btn-fire-glint"></div>
+          <span class="material-symbols-outlined text-[28px]">rocket_launch</span>
+          Siber Savunma Hattını Ateşle
+        </button>
+
+        <!-- API Response Preview -->
+        <div id="response-preview" class="hidden glass border border-slate-200/50 rounded-xl p-4">
+          <h4 class="font-geist text-xs text-outline uppercase tracking-widest mb-3">Son API Yanıtı</h4>
+          <pre id="response-json" class="font-geist text-[10px] text-on-surface-variant overflow-x-auto max-h-48 overflow-y-auto leading-relaxed"></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════════
+       TAB 3: ZK-STARK MANTIĞI
+  ════════════════════════════════════════════════════════════════ -->
+  <section id="tab-zkstark" class="tab-panel">
+    <div class="mb-6">
+      <h2 class="font-geist font-semibold text-2xl text-primary tracking-tight">Kriptografik Sıkıştırma Matrisi</h2>
+      <div class="neon-div w-1/3 mt-2 mb-3 rounded-full"></div>
+      <p class="text-on-surface-variant text-sm max-w-2xl">Rust tabanlı Winterfell motoru aracılığıyla Dilithium-5 MLWE matris enjeksiyonu ve ZK-STARK kanıt üretiminin gerçek zamanlı metrikleri.</p>
+    </div>
+
+    <div class="grid grid-cols-12 gap-6">
+      <!-- Left: Performance Cards -->
+      <div class="col-span-12 lg:col-span-4 flex flex-col gap-4">
+        <!-- Kanıtlayıcı Zamanı -->
+        <div class="glass neon-safe rounded-xl p-6">
+          <div class="flex justify-between items-center mb-3">
+            <h4 class="font-geist text-xs text-outline uppercase tracking-widest">KANITLAYICI ZAMANI</h4>
+            <span class="material-symbols-outlined text-primary-container">speed</span>
+          </div>
+          <div class="font-geist font-bold text-5xl text-primary">
+            <span id="zk-prover-ms">—</span><span class="text-xl text-slate-400 font-normal">ms</span>
+          </div>
+          <div class="font-geist text-xs text-secondary mt-2 flex items-center gap-1">
+            <span class="material-symbols-outlined text-sm">info</span>
+            <span id="zk-prover-info">Simülasyon bekleniyor</span>
+          </div>
+        </div>
+
+        <!-- Kanıt Boyutu -->
+        <div class="glass neon-safe rounded-xl p-6">
+          <div class="flex justify-between items-center mb-3">
+            <h4 class="font-geist text-xs text-outline uppercase tracking-widest">KANIT BOYUTU</h4>
+            <span class="material-symbols-outlined text-primary-container">compress</span>
+          </div>
+          <div class="font-geist font-bold text-3xl text-primary">
+            <span id="zk-proof-size">—</span><span class="text-lg text-slate-400 font-normal"> KB</span>
+          </div>
+          <p class="font-geist text-xs text-on-surface-variant mt-1">Hex-kodlanmış STARK kanıt baytları</p>
+        </div>
+
+        <!-- Calldata Emilimi -->
+        <div class="glass neon-safe rounded-xl p-6">
+          <div class="flex justify-between items-center mb-3">
+            <h4 class="font-geist text-xs text-outline uppercase tracking-widest">CALLDATA EMİLİMİ</h4>
+            <span class="material-symbols-outlined text-primary-container">data_compression</span>
+          </div>
+          <div class="flex justify-between items-center mb-2">
+            <span class="text-xs font-geist px-2 py-0.5 rounded-full bg-secondary-container text-secondary font-semibold">OPTİMİZE</span>
+            <span id="zk-calldata-pct-label" class="font-geist font-bold text-secondary text-sm">—</span>
+          </div>
+          <div class="metric-bar">
+            <div id="zk-calldata-bar" class="metric-fill bg-primary-container" style="width:0%"></div>
+          </div>
+          <p class="font-geist text-[10px] text-outline mt-2">Ham Dilithium-5 (4608B) → STARK sıkıştırması</p>
+        </div>
+
+        <!-- Jüri Notu -->
+        <div class="glass neon-safe rounded-xl p-4">
+          <h4 class="font-geist text-xs text-outline uppercase tracking-widest mb-2">Teknik Not</h4>
+          <p class="font-geist text-xs text-on-surface-variant bg-slate-50/60 p-3 rounded border-l-2 border-primary-container leading-relaxed">
+            Rust Winterfell motoru, Dilithium-5 MLWE matrislerini AIR üzerinden kısıtlayarak logaritmik boyutlu ZK-STARK kanıtına dönüştürür. Matris boyutları PQC zırhına göre dinamik olarak (örn. 8x7) ölçeklenir ve public matrix A dinamik <code class="bg-slate-200 px-1 rounded">rho_prime</code> seed'i ile türetilir.
+          </p>
+        </div>
+      </div>
+
+      <!-- Right: Visualizers -->
+      <div class="col-span-12 lg:col-span-8 flex flex-col gap-6">
+        <!-- Matrix Rotator -->
+        <div class="glass neon-safe rounded-xl p-6 relative overflow-hidden min-h-[260px]">
+          <div class="flex items-center justify-between mb-4 relative z-10">
+            <h4 class="font-geist text-xs text-outline uppercase tracking-widest">Dinamik Matris Rotasyonu (MTD Space)</h4>
+            <div class="flex items-center gap-2">
+              <span class="font-geist text-[10px] text-outline uppercase">Aktif Seed (İlk 8 Karakter):</span>
+              <span id="matrix-rho-seed" class="font-geist text-[11px] font-bold bg-primary/10 text-primary px-2 py-0.5 rounded border border-primary/20">0x...</span>
+            </div>
+          </div>
+          <div class="absolute inset-0 flex items-center justify-center opacity-70 pointer-events-none mt-6">
+            <svg width="100%" height="100%" viewBox="0 0 800 220" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
+              <defs>
+                <pattern id="grid-pat" width="40" height="40" patternUnits="userSpaceOnUse">
+                  <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(226,232,240,0.45)" stroke-width="0.5"/>
+                </pattern>
+              </defs>
+              <rect width="100%" height="100%" fill="url(#grid-pat)"/>
+              <path d="M 80 110 Q 250 40 420 110 T 720 110" fill="none" stroke="#06b6d4" stroke-width="2" stroke-dasharray="6 4"/>
+              <circle cx="80"  cy="110" r="5" fill="#00687a"/>
+              <circle cx="250" cy="75"  r="4" fill="#4cd7f6"/>
+              <circle cx="420" cy="110" r="5" fill="#00687a"/>
+              <circle cx="600" cy="85"  r="4" fill="#4cd7f6"/>
+              <circle cx="720" cy="110" r="5" fill="#00687a"/>
+              <text font-family="Geist,monospace" font-size="11" fill="#3d494c" x="85"  y="102">A = ExpandA(rho_prime)</text>
+              <text font-family="Geist,monospace" font-size="11" fill="#3d494c" x="435" y="102">AIR Kısıtlaması (t = A·s1 + s2)</text>
+              <text font-family="Geist,monospace" font-size="10" fill="#6d797d" x="620" y="80">MTD_Node_Din</text>
+            </svg>
+          </div>
+          <!-- Polinom grid overlay -->
+          <div id="matrix-grid" class="grid grid-cols-6 gap-2 opacity-50 relative z-10 mt-8">
+          </div>
+        </div>
+
+        <!-- Compression Funnel -->
+        <div class="glass neon-safe rounded-xl p-6">
+          <div class="flex justify-between items-center mb-5">
+            <h4 class="font-geist text-xs text-outline uppercase tracking-widest">ZK-STARK SIKIŞTIRMA HUNİSİ</h4>
+            <span class="font-geist text-[10px] bg-slate-100 text-primary-container px-2 py-1 rounded border border-slate-200">Dilithium-5 → STARK</span>
+          </div>
+          <div class="flex items-center justify-between gap-4 py-6 px-8 border border-slate-200/50 rounded-lg bg-slate-50/50">
+            <!-- Input -->
+            <div class="flex flex-col items-center gap-2">
+              <div class="w-20 h-20 rounded-full border-2 border-dashed border-slate-400 flex items-center justify-center bg-white">
+                <span class="material-symbols-outlined text-3xl text-slate-400">fingerprint</span>
+              </div>
+              <span class="font-geist text-xs text-slate-500">4608B HAM İMZA</span>
+            </div>
+            <!-- SVG Funnel -->
+            <div class="flex-1 h-28 relative">
+              <svg width="100%" height="100%" viewBox="0 0 400 100" preserveAspectRatio="none">
+                <path d="M 0 15 L 400 35 L 400 65 L 0 85 Z" fill="rgba(6,182,212,0.09)" stroke="#06b6d4" stroke-width="1"/>
+                <circle cx="50" cy="50" r="2.5" fill="#00687a"><animate attributeName="cx" from="0" to="400" dur="2.2s" repeatCount="indefinite"/></circle>
+                <circle cx="150" cy="44" r="2" fill="#4cd7f6"><animate attributeName="cx" from="0" to="400" dur="2.8s" repeatCount="indefinite"/></circle>
+                <circle cx="100" cy="56" r="2" fill="#00687a"><animate attributeName="cx" from="0" to="400" dur="1.9s" repeatCount="indefinite"/></circle>
+              </svg>
+            </div>
+            <!-- Output -->
+            <div class="flex flex-col items-center gap-2">
+              <div class="w-14 h-14 rounded-lg border-2 border-primary-container flex items-center justify-center bg-primary-container/10 shadow-[0_0_15px_rgba(6,182,212,0.3)]">
+                <span class="material-symbols-outlined text-xl text-primary-container">qr_code_2</span>
+              </div>
+              <span id="zk-output-size" class="font-geist text-xs text-primary font-bold">— KB KANIT</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- AIR Boundary State Table -->
+        <div class="glass neon-safe rounded-xl p-6">
+          <h4 class="font-geist text-xs text-outline uppercase tracking-widest mb-4">AIR Sınır Koşulları (Solidity Payload)</h4>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="bg-slate-50/70 rounded-lg p-3 border border-slate-200/60 text-center">
+              <p class="font-geist text-[10px] text-outline uppercase mb-1">start_a</p>
+              <p id="air-start-a" class="font-geist font-bold text-primary text-lg">—</p>
+            </div>
+            <div class="bg-slate-50/70 rounded-lg p-3 border border-slate-200/60 text-center">
+              <p class="font-geist text-[10px] text-outline uppercase mb-1">start_s1</p>
+              <p id="air-start-s1" class="font-geist font-bold text-primary text-lg">—</p>
+            </div>
+            <div class="bg-slate-50/70 rounded-lg p-3 border border-slate-200/60 text-center">
+              <p class="font-geist text-[10px] text-outline uppercase mb-1">start_s2</p>
+              <p id="air-start-s2" class="font-geist font-bold text-primary text-lg">—</p>
+            </div>
+            <div class="bg-slate-50/70 rounded-lg p-3 border border-slate-200/60 text-center">
+              <p class="font-geist text-[10px] text-outline uppercase mb-1">start_t</p>
+              <p id="air-start-t" class="font-geist font-bold text-primary text-lg">—</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════════
+       TAB 4: ZİNCİR İÇİ İZLEYİCİ
+  ════════════════════════════════════════════════════════════════ -->
+  <section id="tab-onchain" class="tab-panel">
+    <div class="mb-6">
+      <h2 class="font-geist font-semibold text-2xl text-on-surface tracking-tight">Zincir İçi Durum İzleyicisi</h2>
+      <p class="text-on-surface-variant text-sm mt-1">ERC-4337 Akıllı Hesap durum haritası, Time-Lock Önleyici ve Paymaster kayıtları.</p>
+      <div class="neon-div w-1/3 mt-3 opacity-60 rounded-full"></div>
+    </div>
+
+    <!-- Integrity Banner -->
+    <div id="integrity-banner" class="glass rounded-xl p-5 mb-6 neon-safe border-primary-container/30 flex items-center justify-between">
+      <div class="flex items-center gap-4">
+        <div class="h-12 w-12 rounded-full bg-primary-container/20 flex items-center justify-center border border-primary-container/50">
+          <span id="integrity-icon" class="material-symbols-outlined text-primary-container text-2xl" style="font-variation-settings:'FILL' 1">verified_user</span>
+        </div>
+        <div>
+          <h3 id="integrity-title" class="font-geist font-semibold text-base text-primary">Sistem Bütünlüğü: ML-DSA-44 Aktif</h3>
+          <p id="integrity-sub" class="font-geist text-xs text-on-surface-variant mt-0.5">Kuantum Sonrası Kriptografi İmza Doğrulaması Çalışıyor.</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="flex h-3 w-3 relative">
+          <span id="integrity-ping" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75"></span>
+          <span id="integrity-dot" class="relative inline-flex rounded-full h-3 w-3 bg-secondary"></span>
+        </span>
+        <span id="integrity-status-txt" class="font-geist text-xs font-bold text-secondary">Güvenli</span>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-12 gap-6">
+      <!-- Time-Lock Widget -->
+      <div id="timelock-widget" class="col-span-12 lg:col-span-4 glass rounded-xl p-6 border-rose-500/50 neon-safe flex flex-col">
+        <div class="flex justify-between items-center mb-3">
+          <h3 class="font-geist font-semibold text-base text-on-surface">Zaman-Kilidi Önleyici</h3>
+          <span class="material-symbols-outlined text-rose-500 text-xl">timer</span>
+        </div>
+        <div class="neon-div-panic mb-5 rounded-full opacity-70"></div>
+
+        <div class="flex-grow flex flex-col justify-center items-center text-center space-y-3 my-4">
+          <p class="font-geist text-[10px] text-on-surface-variant uppercase tracking-widest">Solidity SECURITY_DELAY</p>
+          <div id="countdown-display" class="font-geist font-bold text-5xl text-rose-600 tracking-tight">
+            <span id="tl-hours">02</span>:<span id="tl-minutes">00</span>:<span id="tl-seconds">00</span>
+          </div>
+          <div class="flex flex-col gap-1 text-xs font-geist text-on-surface-variant">
+            <p id="tl-tx-hash" class="font-geist text-[10px]">Tx Hash: <span class="text-primary">—</span></p>
+            <p id="tl-state" class="font-geist text-[10px] text-outline">Panik modunu tetiklemek için simülasyon çalıştırın</p>
+          </div>
+        </div>
+
+        <div class="mt-auto pt-4 border-t border-slate-200/50">
+          <!-- Solidity constants -->
+          <div class="space-y-2 mb-4">
+            <div class="flex justify-between text-xs font-geist">
+              <span class="text-outline">SECURITY_DELAY:</span>
+              <span class="text-on-surface font-bold">7200s (2 saat)</span>
+            </div>
+            <div class="flex justify-between text-xs font-geist">
+              <span class="text-outline">HIGH_VALUE_THRESHOLD:</span>
+              <span class="text-on-surface font-bold">5000 ETH</span>
+            </div>
+          </div>
+          <button id="cancel-btn" onclick="cancelTimelock()" class="w-full py-3 px-4 rounded-lg bg-rose-500 text-white font-geist text-sm font-bold shadow-[0_0_20px_rgba(244,63,94,0.4)] hover:bg-rose-600 transition-colors active:scale-95 flex items-center justify-center gap-2">
+            <span class="material-symbols-outlined text-base">cancel</span> ACİL İPTAL
+          </button>
+        </div>
+      </div>
+
+      <!-- Paymaster Logs -->
+      <div class="col-span-12 lg:col-span-8 glass rounded-xl p-6 neon-safe flex flex-col">
+        <div class="flex justify-between items-center mb-3">
+          <h3 class="font-geist font-semibold text-base text-on-surface">Sıfır-Gas Paymaster Kayıtları</h3>
+          <button onclick="refreshPaymaster()" class="text-primary hover:text-primary-container transition-colors">
+            <span class="material-symbols-outlined">refresh</span>
+          </button>
+        </div>
+        <div class="neon-div mb-5 rounded-full opacity-60"></div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-slate-200/50 font-geist text-xs text-slate-500 uppercase tracking-wider">
+                <th class="py-3 px-4">Blok No</th>
+                <th class="py-3 px-4">İşlem Tipi</th>
+                <th class="py-3 px-4">Gas Maliyeti</th>
+                <th class="py-3 px-4">CEI Doğrulaması (On-Chain)</th>
+              </tr>
+            </thead>
+            <tbody id="paymaster-log-body" class="font-geist text-xs text-on-surface">
+              <tr class="border-b border-slate-100 hover:bg-slate-50/50">
+                <td class="py-3 px-4 text-on-surface-variant">18493021</td>
+                <td class="py-3 px-4">Kanal Açma</td>
+                <td class="py-3 px-4 text-secondary font-semibold">$0.00 SPONSORLU</td>
+                <td class="py-3 px-4 flex items-center gap-1.5 text-primary">
+                  <span class="material-symbols-outlined text-sm">check_circle</span> ZK-STARK doğrulandı
+                </td>
+              </tr>
+              <tr class="border-b border-slate-100 hover:bg-slate-50/50">
+                <td class="py-3 px-4 text-on-surface-variant">18493018</td>
+                <td class="py-3 px-4">Guardian Ping</td>
+                <td class="py-3 px-4 text-secondary font-semibold">$0.00 SPONSORLU</td>
+                <td class="py-3 px-4 flex items-center gap-1.5 text-primary">
+                  <span class="material-symbols-outlined text-sm">check_circle</span> ZK-STARK doğrulandı
+                </td>
+              </tr>
+              <tr class="border-b border-slate-100 hover:bg-slate-50/50">
+                <td class="py-3 px-4 text-on-surface-variant">18492995</td>
+                <td class="py-3 px-4">Kasa Senkronizasyonu</td>
+                <td class="py-3 px-4 text-secondary font-semibold">$0.00 SPONSORLU</td>
+                <td class="py-3 px-4 flex items-center gap-1.5 text-primary">
+                  <span class="material-symbols-outlined text-sm">check_circle</span> ZK-STARK doğrulandı
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- On-Chain State Map (from Solidity / proof) -->
+        <div class="mt-6 border-t border-slate-200/50 pt-5">
+          <h4 class="font-geist text-xs text-outline uppercase tracking-widest mb-4">QAdaptiveAccount — Durum Haritası</h4>
+          <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <div class="bg-slate-50/70 rounded-lg p-3 border border-slate-200/60">
+              <p class="font-geist text-[10px] text-outline uppercase mb-1">currentArmorTier</p>
+              <p id="sol-armor-tier" class="font-geist font-bold text-primary text-sm">Standard</p>
+            </div>
+            <div class="bg-slate-50/70 rounded-lg p-3 border border-slate-200/60">
+              <p class="font-geist text-[10px] text-outline uppercase mb-1">start_a (AIR)</p>
+              <p id="sol-start-a" class="font-geist font-bold text-primary text-sm">—</p>
+            </div>
+            <div class="bg-slate-50/70 rounded-lg p-3 border border-slate-200/60">
+              <p class="font-geist text-[10px] text-outline uppercase mb-1">start_s1 (AIR)</p>
+              <p id="sol-start-s1" class="font-geist font-bold text-primary text-sm">—</p>
+            </div>
+            <div class="bg-slate-50/70 rounded-lg p-3 border border-slate-200/60">
+              <p class="font-geist text-[10px] text-outline uppercase mb-1">start_s2 (AIR)</p>
+              <p id="sol-start-s2" class="font-geist font-bold text-primary text-sm">—</p>
+            </div>
+            <div class="bg-slate-50/70 rounded-lg p-3 border border-slate-200/60">
+              <p class="font-geist text-[10px] text-outline uppercase mb-1">start_t (AIR)</p>
+              <p id="sol-start-t" class="font-geist font-bold text-primary text-sm">—</p>
+            </div>
+            <div class="bg-slate-50/70 rounded-lg p-3 border border-slate-200/60">
+              <p class="font-geist text-[10px] text-outline uppercase mb-1">SECURITY_DELAY</p>
+              <p class="font-geist font-bold text-primary text-sm">7200s</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- HTTP 429 OVERLAY -->
+<div id="http-429-overlay" class="fixed inset-0 z-[100] hidden flex flex-col items-center justify-center bg-black/80 backdrop-blur-md">
+  <div class="glass-dark border border-tertiary shadow-[0_0_80px_rgba(188,11,59,0.5)] rounded-2xl p-10 max-w-2xl text-center animate-pulse">
+    <span class="material-symbols-outlined text-7xl text-tertiary mb-4">gavel</span>
+    <h2 class="font-geist font-bold text-3xl text-white mb-2 tracking-tight uppercase">🔴 CRYPTOGRAPHIC PROOF QUEUE SATURATED</h2>
+    <p class="font-geist text-base text-slate-300 mb-6 font-bold">(50/50 ACTIVE WORKERS) - INITIATING ON-CHAIN BACKUP TIME-LOCK PROTECTION</p>
+    <div class="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
+      <div class="h-full bg-tertiary w-full"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     FOOTER
+══════════════════════════════════════════════════════════════════════════ -->
+<footer class="fixed bottom-0 right-0 left-64 py-3 px-8 border-t border-slate-200/20 bg-white/30 backdrop-blur-sm z-30 flex justify-between items-center">
+  <p class="font-geist text-[10px] text-on-surface-variant/60 max-w-2xl">
+    Q-ADAPTIVE AI Guardian v2.4 — FastAPI + ONNX + Rust Winterfell ZK-STARK + Solidity ERC-4337
+  </p>
+  <div class="flex gap-5">
+    <button onclick="switchTab('telemetri')" class="font-geist text-[11px] text-on-surface-variant/60 hover:text-primary transition-colors">Canlı Telemetri</button>
+    <button onclick="switchTab('zkstark')"   class="font-geist text-[11px] text-on-surface-variant/60 hover:text-primary transition-colors">ZK-STARK Mantığı</button>
+    <button onclick="switchTab('onchain')"   class="font-geist text-[11px] text-on-surface-variant/60 hover:text-primary transition-colors">Zincir İçi</button>
+  </div>
+</footer>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     JAVASCRIPT ENGINE
+══════════════════════════════════════════════════════════════════════════ -->
+<script>
+// ─────────────────────────────────────────────────────────────────
+// Global State
+// ─────────────────────────────────────────────────────────────────
+const API_URL       = '/api/predict';
+let   isPanic       = false;
+let   riskChart     = null;
+let   countdownSec  = 7200; // default 2h, overridden from API
+let   countdownInt  = null;
+let   lastResponse  = null;
+
+// Scenario payloads — exact values from calibration_metadata.json
+const SCENARIOS = {
+  standart : { Islem_Sikligi: 1.1,  IP_Sapmasi: 0.02, Gas_Sapmasi: 0.05  },
+  bot      : { Islem_Sikligi: 50.0, IP_Sapmasi: 0.05, Gas_Sapmasi: 0.1   },
+  drainer  : { Islem_Sikligi: 2.0,  IP_Sapmasi: 0.95, Gas_Sapmasi: 15.5  },
+};
+
+// ─────────────────────────────────────────────────────────────────
+// Tab Navigation
+// ─────────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('[id^="nav-"]').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  document.getElementById('nav-' + name).classList.add('active');
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Chart.js Risk Gauge
+// ─────────────────────────────────────────────────────────────────
+function initGauge() {
+  // Leak guard: mevcut bir Chart örneği varsa canvas serbest bırakılmadan
+  // yeni bir örnek yaratıldığında WebGL bağlam sızıntısı oluşur.
+  // Her çağrıda önce temizle.
+  if (riskChart) {
+    riskChart.destroy();
+    riskChart = null;
+  }
+
+  const ctx = document.getElementById('riskGauge').getContext('2d');
+  const gradSafe  = ctx.createLinearGradient(0,0,0,200);
+  gradSafe.addColorStop(0, '#4cd7f6');
+  gradSafe.addColorStop(1, '#00687a');
+  const gradPanic = ctx.createLinearGradient(0,0,0,200);
+  gradPanic.addColorStop(0, '#ff7f8b');
+  gradPanic.addColorStop(1, '#ba1a1a');
+
+  riskChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      datasets: [{
+        data: [0, 100],
+        backgroundColor: [gradSafe, '#eff4ff'],
+        borderWidth: 0,
+        circumference: 270,
+        rotation: 225,
+        cutout: '85%',
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { tooltip: { enabled: false }, legend: { display: false } },
+      animation: { duration: 800, easing: 'easeOutQuart' },
+    }
+  });
+
+  window._gradSafe  = gradSafe;
+  window._gradPanic = gradPanic;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Matrix Grid Init
+// ─────────────────────────────────────────────────────────────────
+function initMatrixGrid() {
+  const grid = document.getElementById('matrix-grid');
+  if (!grid) return;
+  for (let i = 0; i < 24; i++) {
+    const cell = document.createElement('div');
+    cell.className = 'matrix-cell';
+    cell.id = 'mcell-' + i;
+    cell.textContent = `P${i}`;
+    grid.appendChild(cell);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Slider wiring
+// ─────────────────────────────────────────────────────────────────
+function initSliders() {
+  const sl = document.getElementById('custom-tx');
+  const lb = document.getElementById('custom-tx-val');
+  if (sl) sl.addEventListener('input', () => lb.textContent = sl.value);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Fire Prediction → POST /api/predict
+// ─────────────────────────────────────────────────────────────────
+async function firePrediction() {
+  const btn = document.getElementById('fire-btn');
+  btn.disabled = true;
+  btn.innerHTML = `<span class="material-symbols-outlined text-xl animate-spin">autorenew</span> Analiz Ediliyor...`;
+
+  // Ağ kesintisi bannerını gizle (önceki hata durumu varsa)
+  const netBanner = document.getElementById('net-down-banner');
+  if (netBanner) netBanner.classList.add('hidden');
+
+  const selectedScenario = document.querySelector('input[name="simulation_type"]:checked').value;
+  const payload = { ...SCENARIOS[selectedScenario], scenario_label: selectedScenario };
+
+  termLog(`> [${new Date().toLocaleTimeString()}] POST ${API_URL}`);
+  termLog(`> Payload: ${JSON.stringify(payload)}`);
+  termLog(`> Senaryo: ${selectedScenario.toUpperCase()}`, '#94a3b8');
+
+  // AbortController: 30 saniye sonra istek iptal edilir.
+  // FastAPI askıda kalırsa buton sonsuza kadar devre dışı kalmaz.
+  const controller = new AbortController();
+  const timeoutId  = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    const t0  = performance.now();
+    const res = await fetch(API_URL, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+      signal:  controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (res.status === 429) {
+      document.getElementById('http-429-overlay').classList.remove('hidden');
+      document.getElementById('http-429-overlay').classList.add('flex');
+      throw new Error("HTTP 429: Proof Queue Saturated");
+    }
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+
+    const data   = await res.json();
+    const rtt    = (performance.now() - t0).toFixed(1);
+    lastResponse = data;
+
+    document.getElementById('hud-latency').textContent = `${rtt}ms`;
+
+    termLog(`> ✅ Yanıt alındı (${rtt}ms)`, '#6cf8bb');
+    termLog(`> Risk: ${data.ai_metrics.risk_score.toFixed(2)}% | Action: ${data.action}`, data.action === 'TRIGGER_PANIC_MODE' ? '#ff7f8b' : '#6cf8bb');
+
+    if (data.action === 'TRIGGER_PANIC_MODE') {
+      termLog(`> 🔐 ZK-STARK kanıt üretildi — ${data.pqc_metrics.proof_size_kb.toFixed(2)} KB`, '#4cd7f6');
+    }
+
+    updateAllUI(data, selectedScenario);
+    showResponsePreview(data);
+
+  } catch(err) {
+    clearTimeout(timeoutId);
+    const isTimeout = err.name === 'AbortError';
+    const isNetwork = !err.message.startsWith('HTTP') && !isTimeout;
+
+    const msg = isTimeout
+      ? 'BAĞLANTI ZAMAN AŞIMI — FastAPI 30s içinde yanıt vermedi'
+      : (isNetwork ? `AĞ HATASI — Backend'e ulaşılamıyor: ${err.message}` : err.message);
+
+    termLog(`> ❌ HATA: ${msg}`, '#ff7f8b');
+    console.error('API error:', err);
+
+    // Ağ/zaman aşımı hatası için görsel banner göster
+    if ((isTimeout || isNetwork) && netBanner) {
+      netBanner.classList.remove('hidden');
+      document.getElementById('net-down-msg').textContent = msg;
+    }
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = `<div class="btn-fire-glint"></div><span class="material-symbols-outlined text-[28px]">rocket_launch</span> Siber Savunma Hattını Ateşle`;
+  document.getElementById('hud-status').textContent = 'ENJEKSİYON TAMAMLANDI';
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Master UI Update (all 4 panels)
+// ─────────────────────────────────────────────────────────────────
+function updateAllUI(data, scenario) {
+  const risk    = data.ai_metrics.risk_score;
+  const ai      = data.ai_metrics;
+  const pqc     = data.pqc_metrics;
+  const evm     = data.evm_metrics;
+  const panic   = data.action === 'TRIGGER_PANIC_MODE';
+
+  if (document.getElementById('tele-tau-value')) {
+    document.getElementById('tele-tau-value').textContent = ai.dynamic_tau ? `${ai.dynamic_tau.toFixed(1)}%` : '75.0%';
+  }
+  if (document.getElementById('pill-gas-val')) {
+    document.getElementById('pill-gas-val').textContent = ai.variance_gas !== undefined ? ai.variance_gas.toFixed(3) : '—';
+    document.getElementById('pill-freq-val').textContent = ai.variance_freq !== undefined ? ai.variance_freq.toFixed(3) : '—';
+    document.getElementById('window-fill-bar').style.width = '100%';
+    document.getElementById('window-fill-pct').textContent = '100%';
+  }
+  if (document.getElementById('hud-tau-val')) {
+    document.getElementById('hud-tau-val').textContent = ai.dynamic_tau ? `${ai.dynamic_tau.toFixed(2)}%` : '75.0%';
+    // queue_size artık ai_metrics altında API tarafından iletilmektedir
+    const qs = (ai.queue_size !== undefined) ? ai.queue_size : (data.queue_size || 0);
+    document.getElementById('hud-queue-token').textContent = `[${qs} / 50] RESERVE`;
+  }
+  if (document.getElementById('matrix-rho-seed')) {
+    document.getElementById('matrix-rho-seed').textContent = pqc.rho_prime_hex ? pqc.rho_prime_hex.substring(0, 8) : '—';
+  }
+
+  // ── Panel 1: Telemetri ────────────────────────────────────────
+  // Risk gauge
+  document.getElementById('risk-value-display').textContent = Math.round(risk);
+  riskChart.data.datasets[0].data = [risk, 100 - risk];
+  riskChart.data.datasets[0].backgroundColor[0] = panic ? window._gradPanic : window._gradSafe;
+  riskChart.update();
+
+  // Risk badge
+  const badge = document.getElementById('risk-label-badge');
+  if (panic) {
+    badge.textContent = 'PANIC MODE';
+    badge.className = 'px-3 py-1 rounded-full text-xs font-geist font-bold bg-error/10 text-error border border-error/30 transition-all duration-300';
+  } else {
+    badge.textContent = 'SAFE';
+    badge.className = 'px-3 py-1 rounded-full text-xs font-geist font-bold bg-secondary/10 text-secondary border border-secondary/30 transition-all duration-300';
+  }
+
+  // Metric dials — use actual input values from API response
+  const txFreq  = ai.islem_sikligi;
+  const ipDev   = ai.ip_sapmasi;
+  const gasDev  = ai.gas_sapmasi;
+
+  document.getElementById('metric-tx-freq').textContent = txFreq.toFixed(1);
+  document.getElementById('metric-ip-dev').textContent  = ipDev.toFixed(3);
+  document.getElementById('metric-gas-vol').textContent = gasDev.toFixed(2);
+
+  document.getElementById('metric-tx-bar').style.width  = `${Math.min(txFreq / 10, 100)}%`;
+  document.getElementById('metric-ip-bar').style.width  = `${Math.min(ipDev * 100, 100)}%`;
+  document.getElementById('metric-gas-bar').style.width = `${Math.min(gasDev * 5, 100)}%`;
+
+  // ZK mini-stats in telemetri
+  document.getElementById('tele-armor-tier').textContent = pqc.armor_tier;
+  document.getElementById('tele-proof-size').textContent = pqc.proof_size_kb > 0 ? `${pqc.proof_size_kb.toFixed(2)} KB` : '—';
+  document.getElementById('tele-calldata').textContent   = pqc.calldata_absorption_pct > 0 ? `%${pqc.calldata_absorption_pct.toFixed(1)}` : '—';
+  document.getElementById('prover-timer-tele').textContent = pqc.prover_time_ms > 0 ? `${pqc.prover_time_ms.toFixed(1)} ms` : '—';
+  document.getElementById('zk-status-line').textContent = panic ? 'Rust Winterfell kanıt üretimi tamamlandı' : 'Dinleniyor — Panik tetiklendiğinde aktive olur';
+
+  // On-chain log
+  addLogEntry(scenario, risk, panic);
+
+  // Panic/safe UI mode
+  if (panic && !isPanic) {
+    triggerPanicMode(evm.time_lock_seconds);
+  } else if (!panic && isPanic) {
+    triggerSafeMode();
+  }
+
+  // ── Panel 3: ZK-STARK ─────────────────────────────────────────
+  document.getElementById('zk-prover-ms').textContent   = pqc.prover_time_ms > 0 ? pqc.prover_time_ms.toFixed(1) : '—';
+  document.getElementById('zk-prover-info').textContent = pqc.prover_time_ms > 0 ? 'Rust Winterfell motoru' : 'Panik modu gerekli';
+  document.getElementById('zk-proof-size').textContent  = pqc.proof_size_kb > 0 ? pqc.proof_size_kb.toFixed(2) : '—';
+  const cpct = pqc.calldata_absorption_pct;
+  document.getElementById('zk-calldata-pct-label').textContent = cpct > 0 ? `%${cpct.toFixed(1)}` : '—';
+  document.getElementById('zk-calldata-bar').style.width = `${cpct}%`;
+  document.getElementById('zk-output-size').textContent = pqc.proof_size_kb > 0 ? `${pqc.proof_size_kb.toFixed(2)} KB KANIT` : '— KB KANIT';
+
+  // AIR boundary values (from proof_payload.json → evm_metrics)
+  document.getElementById('air-start-a').textContent  = evm.start_a  || '—';
+  document.getElementById('air-start-s1').textContent = evm.start_s1 || '—';
+  document.getElementById('air-start-s2').textContent = evm.start_s2 || '—';
+  document.getElementById('air-start-t').textContent  = evm.start_t  || '—';
+
+  // Matrix cells panic coloring
+  document.querySelectorAll('.matrix-cell').forEach(c => c.classList.toggle('panic', panic));
+
+  // ── Panel 4: On-Chain ─────────────────────────────────────────
+  const armorFull = panic ? 'ML-DSA-87 (Dilithium-5)' : 'Standard (ML-DSA-44)';
+  document.getElementById('sol-armor-tier').textContent = armorFull;
+  document.getElementById('sol-start-a').textContent    = evm.start_a  || '—';
+  document.getElementById('sol-start-s1').textContent   = evm.start_s1 || '—';
+  document.getElementById('sol-start-s2').textContent   = evm.start_s2 || '—';
+  document.getElementById('sol-start-t').textContent    = evm.start_t  || '—';
+
+  // Integrity banner
+  if (panic) {
+    document.getElementById('integrity-title').textContent = 'Sistem Bütünlüğü: ML-DSA-87 PANIK MODU';
+    document.getElementById('integrity-title').className   = 'font-geist font-semibold text-base text-error';
+    document.getElementById('integrity-sub').textContent   = 'ZK-STARK kanıt doğrulandı. Sözleşme işlemleri kilitlendi.';
+    document.getElementById('integrity-icon').textContent  = 'warning';
+    document.getElementById('integrity-icon').className    = 'material-symbols-outlined text-error text-2xl';
+    document.getElementById('integrity-ping').className    = 'animate-ping absolute inline-flex h-full w-full rounded-full bg-error opacity-75';
+    document.getElementById('integrity-dot').className     = 'relative inline-flex rounded-full h-3 w-3 bg-error';
+    document.getElementById('integrity-status-txt').textContent = 'PANIK';
+    document.getElementById('integrity-status-txt').className   = 'font-geist text-xs font-bold text-error';
+  } else {
+    document.getElementById('integrity-title').textContent = 'Sistem Bütünlüğü: ML-DSA-44 Aktif';
+    document.getElementById('integrity-title').className   = 'font-geist font-semibold text-base text-primary';
+    document.getElementById('integrity-sub').textContent   = 'Kuantum Sonrası Kriptografi İmza Doğrulaması Çalışıyor.';
+    document.getElementById('integrity-icon').textContent  = 'verified_user';
+    document.getElementById('integrity-icon').className    = 'material-symbols-outlined text-primary-container text-2xl';
+    document.getElementById('integrity-ping').className    = 'animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75';
+    document.getElementById('integrity-dot').className     = 'relative inline-flex rounded-full h-3 w-3 bg-secondary';
+    document.getElementById('integrity-status-txt').textContent = 'Güvenli';
+    document.getElementById('integrity-status-txt').className   = 'font-geist text-xs font-bold text-secondary';
+  }
+
+  // HUD update
+  document.getElementById('hud-armor').textContent    = pqc.armor_tier;
+  document.getElementById('hud-armor').className      = panic
+    ? 'font-geist font-bold text-error'
+    : 'font-geist font-bold text-primary-container';
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Panic / Safe Mode Global Styling
+// ─────────────────────────────────────────────────────────────────
+function triggerPanicMode(timeLockSec) {
+  isPanic = true;
+
+  // Top nav glow
+  document.getElementById('top-nav').style.boxShadow = '0 0 20px rgba(188,11,59,0.3)';
+
+  // Status banner
+  const ban  = document.getElementById('status-banner');
+  ban.style.background     = 'rgba(188,11,59,0.1)';
+  ban.style.borderColor    = 'rgba(188,11,59,0.5)';
+  ban.style.boxShadow      = '0 0 18px rgba(188,11,59,0.4)';
+  document.getElementById('status-icon').textContent  = 'warning';
+  document.getElementById('status-icon').style.color = '#bc0b3b';
+  document.getElementById('status-text').textContent  = 'PANIC MODE ACTIVATED — PAUSING CONTRACTS';
+  document.getElementById('status-text').style.color  = '#bc0b3b';
+
+  // Risk card
+  const rc = document.getElementById('risk-card');
+  rc.classList.remove('safe-pulse');
+  rc.classList.add('panic-pulse');
+  document.getElementById('risk-neon').className = 'neon-div-panic absolute top-0 left-0 right-0';
+  document.getElementById('risk-value-display').style.color = '#bc0b3b';
+
+  // IP card
+  document.getElementById('ip-card').classList.add('panic-pulse');
+  document.getElementById('ip-neon').className = 'neon-div-panic my-3 opacity-80';
+  document.getElementById('ip-icon').style.color = '#bc0b3b';
+  document.getElementById('metric-ip-bar').style.background = '#bc0b3b';
+
+  // Onchain panel
+  if (document.getElementById('onchain-panel')) {
+    document.getElementById('onchain-panel').classList.add('panic-pulse');
+    document.getElementById('onchain-neon').className = 'neon-div-panic';
+  }
+
+  // Timelock show
+  document.getElementById('timelock-container').classList.remove('hidden');
+  document.getElementById('timelock-container').style.display = 'flex';
+
+  // Timelock widget (tab 4)
+  document.getElementById('timelock-widget').classList.add('panic-pulse');
+
+  // Nav button
+  const nb = document.getElementById('nav-network-btn');
+  nb.style.background   = 'rgba(186,26,26,0.1)';
+  nb.style.borderColor  = 'rgba(186,26,26,0.3)';
+  nb.style.color        = '#ba1a1a';
+  document.getElementById('nav-net-txt').textContent = 'PANIC MODE';
+
+  // Start countdown from API value
+  const secs = timeLockSec || 7200;
+  startCountdown(secs);
+}
+
+function triggerSafeMode() {
+  isPanic = false;
+
+  document.getElementById('top-nav').style.boxShadow = '';
+
+  const ban = document.getElementById('status-banner');
+  ban.style.background = '';  ban.style.borderColor = ''; ban.style.boxShadow = '';
+  document.getElementById('status-icon').textContent = 'shield';
+  document.getElementById('status-icon').style.color = '';
+  document.getElementById('status-text').textContent = 'SİSTEM GÜVENLİ — LIGHT ARMOR ACTIVE (ML-DSA-44)';
+  document.getElementById('status-text').style.color  = '';
+
+  const rc = document.getElementById('risk-card');
+  rc.classList.remove('panic-pulse'); rc.classList.add('safe-pulse');
+  document.getElementById('risk-neon').className = 'neon-div absolute top-0 left-0 right-0';
+  document.getElementById('risk-value-display').style.color = '';
+
+  document.getElementById('ip-card').classList.remove('panic-pulse');
+  document.getElementById('ip-neon').className = 'neon-div my-3 opacity-50';
+  document.getElementById('ip-icon').style.color = '';
+  document.getElementById('metric-ip-bar').style.background = '';
+
+  document.getElementById('onchain-panel').classList.remove('panic-pulse');
+  document.getElementById('onchain-neon').className = 'neon-div';
+
+  document.getElementById('timelock-container').classList.add('hidden');
+  document.getElementById('timelock-widget').classList.remove('panic-pulse');
+
+  const nb = document.getElementById('nav-network-btn');
+  nb.style.background = ''; nb.style.borderColor = ''; nb.style.color = '';
+  document.getElementById('nav-net-txt').textContent = 'NETWORK SECURE';
+
+  clearInterval(countdownInt);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Countdown Timer
+// ─────────────────────────────────────────────────────────────────
+function startCountdown(seconds) {
+  clearInterval(countdownInt);
+  let rem = seconds;
+  function tick() {
+    const h = String(Math.floor(rem / 3600)).padStart(2,'0');
+    const m = String(Math.floor((rem % 3600) / 60)).padStart(2,'0');
+    const s = String(rem % 60).padStart(2,'0');
+    document.getElementById('tl-hours').textContent   = h;
+    document.getElementById('tl-minutes').textContent = m;
+    document.getElementById('tl-seconds').textContent = s;
+    document.getElementById('timelock-countdown').textContent = `${h}:${m}:${s}`;
+    document.getElementById('tl-state').textContent = rem > 0 ? `İşlem ${h}:${m}:${s} süre daha kilitli` : 'Kilit açıldı';
+    if (rem > 0) rem--;
+  }
+  tick();
+  countdownInt = setInterval(tick, 1000);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Log Table
+// ─────────────────────────────────────────────────────────────────
+function addLogEntry(scenario, risk, isCritical) {
+  const tbody = document.getElementById('log-table-body');
+  const now   = new Date();
+  const ts    = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
+  const hash  = `0x${Math.random().toString(16).substr(2,4)}...${Math.random().toString(16).substr(2,4)}`;
+  const rPct  = risk.toFixed(1);
+
+  const eventType = isCritical
+    ? `<span class="px-2 py-0.5 bg-error/10 text-error border border-error/30 rounded text-[10px] font-bold">PAUSE_CONTRACT</span>`
+    : `<span class="px-2 py-0.5 bg-surface-container-high rounded text-[10px]">Sim_${scenario.substr(0,3).toUpperCase()}</span>`;
+
+  const statusHtml = isCritical
+    ? `<span class="text-error flex items-center gap-1"><span class="material-symbols-outlined text-xs">warning</span> CRITICAL</span>`
+    : `<span class="text-secondary flex items-center gap-1"><span class="material-symbols-outlined text-xs">check_circle</span> SUCCESS</span>`;
+
+  const gasHtml = isCritical
+    ? `<span class="text-error">PAYMASTER OVERRIDE</span>`
+    : `Relayed (0 Gas)`;
+
+  const tr = document.createElement('tr');
+  tr.className = `log-row-new border-b border-slate-100 transition-colors ${isCritical ? 'bg-error-container/20' : 'hover:bg-white/50'}`;
+  tr.innerHTML = `
+    <td class="p-4 font-geist text-[11px] text-outline">${ts}</td>
+    <td class="p-4">${eventType}</td>
+    <td class="p-4 ${isCritical ? 'text-error font-bold' : 'text-primary'} truncate max-w-[140px] font-geist text-[11px]">${hash}</td>
+    <td class="p-4 font-geist text-[11px] font-bold ${isCritical ? 'text-error' : 'text-secondary'}">${rPct}%</td>
+    <td class="p-4">${statusHtml}</td>
+    <td class="p-4 font-geist text-[11px]">${gasHtml}</td>
+  `;
+
+  // Clear placeholder row
+  const placeholder = tbody.querySelector('td[colspan="6"]');
+  if (placeholder) tbody.innerHTML = '';
+
+  tbody.insertBefore(tr, tbody.firstChild);
+  if (tbody.children.length > 8) tbody.removeChild(tbody.lastChild);
+
+  // Also add to paymaster log
+  addPaymasterEntry(isCritical);
+}
+
+function addPaymasterEntry(isCritical) {
+  const tbody = document.getElementById('paymaster-log-body');
+  const block = 18493000 + Math.floor(Math.random() * 100);
+  const type  = isCritical ? 'Panik İşlemi (ZK Kanıtlı)' : 'Guardian Ping';
+  const verif = isCritical
+    ? `<td class="py-3 px-4 flex items-center gap-2" title="Checks, Effects, Interactions">
+         <span class="w-2.5 h-2.5 rounded-full bg-slate-300"></span>
+         <span class="w-2.5 h-2.5 rounded-full bg-slate-300"></span>
+         <span class="w-2.5 h-2.5 rounded-full bg-error ring-2 ring-error/30 animate-pulse"></span>
+         <span class="ml-2 font-geist text-[10px] text-error font-bold">CEI: BLOCKED</span>
+       </td>`
+    : `<td class="py-3 px-4 flex items-center gap-2" title="Checks, Effects, Interactions">
+         <span class="w-2.5 h-2.5 rounded-full bg-primary"></span>
+         <span class="w-2.5 h-2.5 rounded-full bg-primary"></span>
+         <span class="w-2.5 h-2.5 rounded-full bg-primary ring-2 ring-primary/30"></span>
+         <span class="ml-2 font-geist text-[10px] text-primary">CEI: VERIFIED</span>
+       </td>`;
+
+  const tr = document.createElement('tr');
+  tr.className = `log-row-new border-b border-slate-100 hover:bg-slate-50/50`;
+  tr.innerHTML = `
+    <td class="py-3 px-4 font-geist text-xs text-on-surface-variant">${block}</td>
+    <td class="py-3 px-4 font-geist text-xs">${type}</td>
+    <td class="py-3 px-4 font-geist text-xs text-secondary font-semibold">$0.00 SPONSORLU</td>
+    ${verif}
+  `;
+  tbody.insertBefore(tr, tbody.firstChild);
+  if (tbody.children.length > 6) tbody.removeChild(tbody.lastChild);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Terminal Logger
+// ─────────────────────────────────────────────────────────────────
+function termLog(msg, color) {
+  const log = document.getElementById('terminal-log');
+  const div = document.createElement('div');
+  div.style.color = color || '#94a3b8';
+  div.textContent = msg;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Response Preview
+// ─────────────────────────────────────────────────────────────────
+function showResponsePreview(data) {
+  const panel = document.getElementById('response-preview');
+  const pre   = document.getElementById('response-json');
+  panel.classList.remove('hidden');
+  pre.textContent = JSON.stringify(data, null, 2);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Cancel Timelock (mock — no actual contract call)
+// ─────────────────────────────────────────────────────────────────
+function cancelTimelock() {
+  clearInterval(countdownInt);
+  const ts = ['00','00','00'];
+  document.getElementById('tl-hours').textContent   = ts[0];
+  document.getElementById('tl-minutes').textContent = ts[1];
+  document.getElementById('tl-seconds').textContent = ts[2];
+  document.getElementById('timelock-countdown').textContent = '00:00:00';
+  document.getElementById('tl-state').textContent = 'İşlem iptal edildi — QAdaptiveAccount.cancelTransaction()';
+  document.getElementById('tl-tx-hash').innerHTML = 'Tx Hash: <span class="text-error">CANCELLED</span>';
+  termLog('> ⚠ cancelTransaction() çağrıldı — İşlem silindi', '#ff7f8b');
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Refresh Paymaster (adds a fresh entry)
+// ─────────────────────────────────────────────────────────────────
+function refreshPaymaster() {
+  addPaymasterEntry(false);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  initGauge();
+  initMatrixGrid();
+  initSliders();
+  // Default countdown display
+  startCountdown(7200);
+
+  // URL parameters handling for automation
+  const params = new URLSearchParams(window.location.search);
+  const run = params.get('run');
+  const tab = params.get('tab');
+  const mock = params.get('mock');
+  if (tab) {
+    switchTab(tab);
+  }
+  if (mock) {
+    const radio = document.querySelector(`input[name="simulation_type"][value="${mock}"]`);
+    if (radio) {
+      radio.checked = true;
+    }
+    const mockResponses = {
+      standart: {
+        "status": "success",
+        "action": "SAFE",
+        "ai_metrics": { "risk_score": 72.36, "islem_sikligi": 1.1, "ip_sapmasi": 0.02, "gas_sapmasi": 0.05 },
+        "pqc_metrics": { "armor_tier": "ML-DSA-44", "prover_time_ms": 0.0, "proof_size_kb": 0.0, "calldata_absorption_pct": 0.0 },
+        "evm_metrics": { "start_a": 0, "start_s1": 0, "start_s2": 0, "start_t": 0, "time_lock_seconds": 0 }
+      },
+      bot: {
+        "status": "success",
+        "action": "TRIGGER_PANIC_MODE",
+        "ai_metrics": { "risk_score": 98.52, "islem_sikligi": 50.0, "ip_sapmasi": 0.05, "gas_sapmasi": 0.1 },
+        "pqc_metrics": { "armor_tier": "ML-DSA-87", "prover_time_ms": 56.4, "proof_size_kb": 3.85, "calldata_absorption_pct": 94.2 },
+        "evm_metrics": { "start_a": 42, "start_s1": 13, "start_s2": 7, "start_t": 553, "time_lock_seconds": 7200 }
+      },
+      drainer: {
+        "status": "success",
+        "action": "TRIGGER_PANIC_MODE",
+        "ai_metrics": { "risk_score": 99.99, "islem_sikligi": 2.0, "ip_sapmasi": 0.95, "gas_sapmasi": 15.5 },
+        "pqc_metrics": { "armor_tier": "ML-DSA-87", "prover_time_ms": 50.1, "proof_size_kb": 3.85, "calldata_absorption_pct": 98.6 },
+        "evm_metrics": { "start_a": 42, "start_s1": 13, "start_s2": 7, "start_t": 553, "time_lock_seconds": 7200 }
+      }
+    };
+    const data = mockResponses[mock];
+    if (data) {
+      updateAllUI(data, mock);
+      showResponsePreview(data);
+    }
+  } else if (run) {
+    const radio = document.querySelector(`input[name="simulation_type"][value="${run}"]`);
+    if (radio) {
+      radio.checked = true;
+    }
+    setTimeout(() => {
+      firePrediction();
+    }, 500);
+  }
+});
+</script>
+</body>
+</html>

@@ -33,6 +33,8 @@
 //   birebir tekrarlayabilir.
 // =============================================================================
 
+use std::time::Instant;
+
 use fips204::traits::{KeyGen, SerDes, Signer, Verifier};
 use fips204::{ml_dsa_44, ml_dsa_65, ml_dsa_87};
 
@@ -82,7 +84,13 @@ pub fn standart_boyutlar(level: MlDsaSecurityLevel) -> (usize, usize, usize) {
 /// Tek bir ML-DSA koşusunun ölçülmüş sonucu.
 ///
 /// Buradaki her sayı **ölçülmüştür** — hiçbiri elle yazılmamıştır.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// `PartialEq` **bilinçli olarak türetilmiyor**: yapı artık süre alanları
+/// içeriyor ve iki koşunun sürelerinin birbirine eşit olmasını beklemek
+/// anlamsızdır. Determinizmi sınamak isteyen `public_key_commitment` ve
+/// `signature_prefix_hex` alanlarını karşılaştırmalıdır — kriptografik çıktı
+/// deterministiktir, ölçülen süre değildir.
+#[derive(Clone, Debug)]
 pub struct PqcSignatureRecord {
     /// Bu koşuda kullanılan güvenlik kademesi.
     pub level: MlDsaSecurityLevel,
@@ -98,6 +106,29 @@ pub struct PqcSignatureRecord {
     pub signature_prefix_hex: String,
     /// İmza bu koşuda gerçekten doğrulandı mı?
     pub verified: bool,
+
+    // ── Ölçülen süreler ─────────────────────────────────────────────────────
+    //
+    // Arayüzdeki adım adım şerit bu üç sayıyı gösterir. Ayrı ayrı ölçülüyorlar
+    // çünkü "ML-DSA yavaş mı?" sorusunun cevabı kademeye göre değişir ve hangi
+    // aşamanın pahalı olduğu ancak böyle görünür.
+    /// Anahtar üretimi süresi (ms).
+    pub keygen_ms: f64,
+    /// İmzalama süresi (ms).
+    pub sign_ms: f64,
+    /// Doğrulama süresi (ms).
+    pub verify_ms: f64,
+
+    /// Kurcalanmış mesaj bu koşuda reddedildi mi?
+    ///
+    /// **Bu alan canlı hatta doldurulur, testte değil.** `kurcalama_reddediliyor`
+    /// fonksiyonu daha önce yalnızca birim testinden çağrılıyordu; artık her
+    /// koşuda çalışıp sonucunu buraya yazıyor. Böylece "kurcalanmış mesaj
+    /// reddediliyor" iddiası sahnede, jürinin gözü önünde kanıtlanıyor —
+    /// bir test dosyasında değil.
+    pub tamper_rejected: bool,
+    /// Kurcalama testinin süresi (ms).
+    pub tamper_ms: f64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,15 +143,32 @@ pub struct PqcSignatureRecord {
 macro_rules! kademe_akisi {
     ($modul:ident, $level:expr, $xi:expr, $sign_seed:expr, $mesaj:expr) => {{
         // 1) Deterministik anahtar üretimi — ξ tohumu ρ''den geliyor.
+        let t_keygen = Instant::now();
         let (pk, sk) = $modul::KG::keygen_from_seed($xi);
+        let keygen_ms = t_keygen.elapsed().as_secs_f64() * 1000.0;
 
         // 2) Deterministik imzalama.
+        let t_sign = Instant::now();
         let sig = sk
             .try_sign_with_seed($sign_seed, $mesaj, SIGN_CONTEXT)
             .map_err(|e| format!("ML-DSA imzalama başarısız: {}", e))?;
+        let sign_ms = t_sign.elapsed().as_secs_f64() * 1000.0;
 
         // 3) Gerçek doğrulama.
+        let t_verify = Instant::now();
         let verified = pk.verify($mesaj, &sig, SIGN_CONTEXT);
+        let verify_ms = t_verify.elapsed().as_secs_f64() * 1000.0;
+
+        // 4) Kurcalama testi — CANLI hatta, testte değil.
+        //    Mesajın son biti çevrilir; aynı imza bu mesajda geçersiz olmalı.
+        let t_tamper = Instant::now();
+        let mut kurcalanmis = $mesaj.to_vec();
+        match kurcalanmis.last_mut() {
+            Some(son) => *son ^= 0x01,
+            None => kurcalanmis.push(0x01),
+        }
+        let tamper_rejected = !pk.verify(&kurcalanmis, &sig, SIGN_CONTEXT);
+        let tamper_ms = t_tamper.elapsed().as_secs_f64() * 1000.0;
 
         let pk_bytes = pk.into_bytes();
         let sk_bytes = sk.into_bytes();
@@ -137,6 +185,11 @@ macro_rules! kademe_akisi {
             public_key_commitment: commitment,
             signature_prefix_hex: hex::encode(&sig_bytes[..16]),
             verified,
+            keygen_ms,
+            sign_ms,
+            verify_ms,
+            tamper_rejected,
+            tamper_ms,
         }
     }};
 }
@@ -173,6 +226,16 @@ pub fn sign_and_verify(
     if !record.verified {
         return Err(format!(
             "{} imzası kendi açık anahtarıyla doğrulanamadı — kütüphane veya tohum hatası",
+            level.name()
+        ));
+    }
+
+    // Kurcalama testi canlı hatta koşuyor. Geçmezse doğrulayıcı her mesajı
+    // kabul ediyor demektir ve imza hiçbir şey ifade etmez — bu durumda
+    // "imza doğrulandı" demek yanıltıcı olurdu, o yüzden koşu durdurulur.
+    if !record.tamper_rejected {
+        return Err(format!(
+            "{}: kurcalanmış mesaj REDDEDİLMEDİ — doğrulayıcı her mesajı kabul ediyor",
             level.name()
         ));
     }
@@ -339,11 +402,53 @@ mod tests {
     }
 
     /// Aynı ρ' → birebir aynı anahtar ve imza (jüri tekrarlanabilirliği).
+    ///
+    /// Yalnızca KRİPTOGRAFİK çıktılar karşılaştırılır. Süre alanları kasıtlı
+    /// olarak dışarıda: iki koşunun aynı milisaniyeyi ölçmesini beklemek
+    /// anlamsızdır ve böyle bir iddia testi kırılgan yapardı.
     #[test]
     fn ayni_rho_ayni_anahtar_ve_imza() {
         let a = sign_and_verify(&RHO, MlDsaSecurityLevel::Level87, MESAJ).unwrap();
         let b = sign_and_verify(&RHO, MlDsaSecurityLevel::Level87, MESAJ).unwrap();
-        assert_eq!(a, b, "Aynı ρ' aynı sonucu vermeli");
+
+        assert_eq!(a.public_key_commitment, b.public_key_commitment);
+        assert_eq!(a.signature_prefix_hex, b.signature_prefix_hex);
+        assert_eq!(a.public_key_len, b.public_key_len);
+        assert_eq!(a.secret_key_len, b.secret_key_len);
+        assert_eq!(a.signature_len, b.signature_len);
+    }
+
+    /// Kurcalama testi CANLI hatta koşuyor ve süreleri ölçülüyor.
+    ///
+    /// Bu, `kurcalama_reddediliyor`'un birim testinden farklı: orada fonksiyon
+    /// testten çağrılıyordu, burada üretim akışının kendisinin doldurduğu
+    /// alan sınanıyor. Arayüzdeki "kurcalanmış mesaj reddedildi" rozeti bu
+    /// alana bağlı.
+    #[test]
+    fn canli_hatta_kurcalama_ve_sureler_olculuyor() {
+        for level in [
+            MlDsaSecurityLevel::Level44,
+            MlDsaSecurityLevel::Level65,
+            MlDsaSecurityLevel::Level87,
+        ] {
+            let kayit = sign_and_verify(&RHO, level, MESAJ).unwrap();
+
+            assert!(
+                kayit.tamper_rejected,
+                "{}: canlı hatta kurcalama reddedilmedi",
+                level.name()
+            );
+
+            for (ad, ms) in [
+                ("keygen", kayit.keygen_ms),
+                ("sign", kayit.sign_ms),
+                ("verify", kayit.verify_ms),
+                ("tamper", kayit.tamper_ms),
+            ] {
+                assert!(ms >= 0.0, "{} süresi negatif: {}", ad, ms);
+                assert!(ms < 10_000.0, "{} süresi mantıksız: {} ms", ad, ms);
+            }
+        }
     }
 
     /// Farklı ρ' → farklı anahtar çifti (rotasyon gerçekten anahtar yeniliyor).

@@ -13,6 +13,7 @@
 // =============================================================================
 
 use crate::air::QAdaptivePublicInputs;
+use crate::pipeline::{LatticeSnapshot, StageRecord};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Write;
@@ -131,6 +132,22 @@ pub struct PqcSummary {
     pub public_key_commitment_hex: String,
     pub signature_prefix_hex: String,
     pub signature_verified: bool,
+
+    /// Anahtar üretimi süresi (ms) — ölçülmüş.
+    pub keygen_ms: f64,
+    /// İmzalama süresi (ms) — ölçülmüş.
+    pub sign_ms: f64,
+    /// Doğrulama süresi (ms) — ölçülmüş.
+    pub verify_ms: f64,
+
+    /// Kurcalanmış mesaj bu koşuda reddedildi mi?
+    ///
+    /// Canlı hatta ölçülür, testte değil. Arayüzdeki "kurcalama reddedildi"
+    /// rozeti bu alana bağlıdır; böylece doğrulayıcının gerçekten çalıştığı
+    /// sahnede gösterilebilir.
+    pub tamper_rejected: bool,
+    /// Kurcalama testinin süresi (ms).
+    pub tamper_ms: f64,
 }
 
 /// Bu koşuda ölçülmüş STARK metrikleri.
@@ -179,6 +196,19 @@ pub struct ProofPayload {
     pub pqc: Option<PqcSummary>,
     /// Calldata tasarrufu — tek tanım, girdileriyle birlikte.
     pub calldata: Option<CalldataRecord>,
+
+    /// Boru hattındaki her aşamanın ölçülmüş süresi.
+    ///
+    /// Arayüzdeki adım adım şerit bu listeden beslenir. "Arkada ne oluyor?"
+    /// sorusunun veri karşılığı budur.
+    pub stages: Vec<StageRecord>,
+
+    /// Kafes matrisinin anlık görüntüsü (kanıt üretilmediyse `None`).
+    ///
+    /// Arayüz bunu bir ızgara olarak çizer; risk arttıkça ızgaranın
+    /// 4×4'ten 8×7'ye büyüdüğü sahnede görünür hâle gelir.
+    pub lattice: Option<LatticeSnapshot>,
+
     pub air_verification_metadata: AirVerificationMetadata,
 }
 
@@ -193,6 +223,8 @@ pub struct PayloadExtras {
     pub stark: StarkMetrics,
     pub pqc: Option<PqcSummary>,
     pub calldata: Option<CalldataRecord>,
+    pub stages: Vec<StageRecord>,
+    pub lattice: Option<LatticeSnapshot>,
 }
 
 /// STARK kanıtını ve durum verisini standart JSON olarak dışa aktarır.
@@ -249,6 +281,8 @@ pub fn export_proof_payload(
         stark: extras.stark,
         pqc: extras.pqc,
         calldata: extras.calldata,
+        stages: extras.stages,
+        lattice: extras.lattice,
         air_verification_metadata: metadata,
     };
 

@@ -304,13 +304,104 @@ class EvmMetrics(BaseModel):
     time_lock_seconds: int
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Ayrıntı Modelleri — "arkada ne oluyor" sorusunun veri karşılığı
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Bu modeller `proof_payload.json`'dan gelir ve yalnızca kanıt üretilen
+# koşularda doldurulur. Normal modda hepsi `None` döner.
+#
+# Neden eklendiler: arayüz ML-DSA anahtar boyutlarını, STARK güvenlik bitini,
+# calldata formülünü ve aşama sürelerini gösteremiyordu — bu veriler diskteki
+# payload'da kalıyor, tarayıcıya hiç ulaşmıyordu. Arayüzün bunları uydurmak
+# yerine gerçeğini göstermesi için buradan geçiyorlar.
+
+
+class StageRecord(BaseModel):
+    """Boru hattındaki tek bir aşamanın ölçülmüş kaydı."""
+    name  : str
+    ms    : float
+    ok    : bool
+    detail: str
+
+
+class PqcDetail(BaseModel):
+    """Ölçülmüş ML-DSA anahtar/imza bilgileri (`proof_payload.json` → `pqc`)."""
+    tier                     : str
+    public_key_bytes         : int
+    secret_key_bytes         : int
+    signature_bytes          : int
+    public_key_commitment_hex: str
+    signature_prefix_hex     : str
+    signature_verified       : bool
+    keygen_ms                : float
+    sign_ms                  : float
+    verify_ms                : float
+    #: Kurcalanmış mesaj CANLI hatta reddedildi mi? Testte değil, bu koşuda.
+    tamper_rejected          : bool
+    tamper_ms                : float
+
+
+class StarkDetail(BaseModel):
+    """Ölçülmüş STARK metrikleri (`proof_payload.json` → `stark`)."""
+    proof_bytes              : int
+    prover_ms                : float
+    conjectured_security_bits: int
+    field                    : str
+    num_queries              : int
+    blowup_factor            : int
+
+
+class CalldataDetail(BaseModel):
+    """Calldata tasarrufu — formülü ve girdileriyle birlikte."""
+    batch_size            : int
+    single_signature_bytes: int
+    naive_batch_bytes     : int
+    stark_proof_bytes     : int
+    savings_pct           : float
+    ecdsa_batch_bytes     : int
+    #: ECDSA'dan küçük müyüz? Beklenen yanıt: hayır. Dürüstlük için taşınıyor.
+    beats_ecdsa           : bool
+    formula               : str
+
+
+class LatticeSnapshot(BaseModel):
+    """Kafes matrisinin anlık görüntüsü — arayüz bunu ızgara olarak çizer."""
+    k         : int
+    ell       : int
+    cell_count: int
+    #: Hücreler DİZE: u128 değerleri JSON sayı aralığını aşıp JavaScript'te
+    #: sessizce hassasiyet kaybedebilirdi.
+    cells     : list[list[str]]
+    commitment: str
+
+
 class ExtendedPredictResponse(BaseModel):
-    """Tam pipeline yanıtı — dört UI sekmesinin tüm alanlarını kapsar."""
+    """Tam pipeline yanıtı.
+
+    İlk beş alan **değişmedi** — eski arayüz ve `test_layer_parity.py`
+    bunlara bağlı. Yeni alanların hepsi `Optional`: normal modda `None`
+    dönerler, asla örnek değerle doldurulmazlar.
+    """
     status     : str
     action     : str
     ai_metrics : AiMetrics
     pqc_metrics: PqcMetrics
     evm_metrics: EvmMetrics
+
+    # ── Yeni: ayrıntı katmanı ────────────────────────────────────────────────
+    #: Bu koşuda yürütülen aşamaların ölçülmüş listesi (ONNX + Rust aşamaları).
+    pipeline         : Optional[list[StageRecord]] = None
+    pqc_detail       : Optional[PqcDetail]         = None
+    stark_detail     : Optional[StarkDetail]       = None
+    calldata_detail  : Optional[CalldataDetail]    = None
+    lattice          : Optional[LatticeSnapshot]   = None
+    #: Koşu kimliği — log ↔ payload ↔ arayüz eşleştirmesi.
+    run_id           : Optional[str]               = None
+    #: Bu koşuda uygulanan dinamik eşik τ(t).
+    tau              : Optional[float]             = None
+    #: Koşu tam deterministik miydi? Jüri tekrarlanabilirliği için.
+    deterministic_run: Optional[bool]              = None
 
 
 class HealthResponse(BaseModel):
@@ -739,11 +830,17 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
     )
 
     # ── ADIM 2: ONNX Çıkarımı ────────────────────────────────────────────────
+    #
+    # Süre ölçülüyor çünkü boru hattının İLK aşaması bu. Rust tarafı kendi
+    # aşamalarını ölçüyor; arayüzdeki şeridin baştan sona tam olması için
+    # buradaki ölçüm onların başına eklenecek.
+    _t_onnx = time.perf_counter()
     risk_pct, onnx_label = _onnx_infer(
         payload.Islem_Sikligi,
         payload.IP_Sapmasi,
         payload.Gas_Sapmasi,
     )
+    onnx_ms = (time.perf_counter() - _t_onnx) * 1000.0
 
     # ── BULGU 3 + 4 DÜZELTMESİ: karar TEK kuraldan geliyor ───────────────────
     #
@@ -783,6 +880,25 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
     response_status  = decision.status
     proof_generated  = False
     calldata_record  = None
+
+    # ── Ayrıntı katmanı — hepsi None ile başlar ──────────────────────────────
+    #
+    # Kanıt üretilmezse None kalırlar. Örnek değerle DOLDURULMAZLAR: arayüz
+    # `—` göstersin, uydurma sayı görmesin. Bu, bulgu 3b'nin (bayat kanıt
+    # geri dönüşü) arayüz tarafındaki karşılığıdır.
+    #
+    # ONNX aşaması her koşuda var — kanıt üretilmese bile AI çalıştı.
+    pipeline_stages: list[dict] = [{
+        "name"  : "onnx_cikarim",
+        "ms"    : onnx_ms,
+        "ok"    : True,
+        "detail": f"3 özellik → risk %{risk_pct:.2f} ({onnx_label})",
+    }]
+    pqc_detail      = None
+    stark_detail    = None
+    lattice_detail  = None
+    payload_run_id  = None
+    deterministic   = None
 
     if is_panic:
         try:
@@ -832,6 +948,26 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
             # Rho-prime hex — rotasyon doğrulaması için yeni alan
             rho_prime_hex   = str(proof_data.get("rho_prime_hex", ""))
             proof_generated = True
+
+            # ── Ayrıntı katmanını payload'dan doldur ─────────────────────────
+            #
+            # Hiçbiri burada HESAPLANMIYOR; prover'ın ÖLÇTÜĞÜ değerler olduğu
+            # gibi taşınıyor. Arayüzün gösterdiği her sayının kaynağı budur.
+            pipeline_stages.extend(proof_data.get("stages") or [])
+            pqc_detail     = proof_data.get("pqc")
+            stark_detail   = proof_data.get("stark")
+            lattice_detail = proof_data.get("lattice")
+            payload_run_id = proof_data.get("run_id")
+            deterministic  = proof_data.get("deterministic_run")
+
+            # Payload yazma, süresi ölçülemediği için bir AŞAMA değil
+            # (bkz. main.rs'teki not) — tamamlanma işareti olarak eklenir.
+            pipeline_stages.append({
+                "name"  : "payload_yazma",
+                "ms"    : 0.0,
+                "ok"    : True,
+                "detail": "proof_payload.json yazıldı (süre ölçülmedi)",
+            })
 
             logger.info(
                 "ZK payload — boyut=%.2f KB, süre=%.1f ms, imza=%d B, "
@@ -900,6 +1036,19 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
             start_t           = evm_start_t,
             time_lock_seconds = _TIME_LOCK_SECONDS,
         ),
+
+        # ── Ayrıntı katmanı ──────────────────────────────────────────────────
+        # Kanıt üretilmediyse bunlar None kalır ve arayüz `—` gösterir.
+        pipeline          = [StageRecord(**s) for s in pipeline_stages],
+        pqc_detail        = PqcDetail(**pqc_detail) if pqc_detail else None,
+        stark_detail      = StarkDetail(**stark_detail) if stark_detail else None,
+        calldata_detail   = (
+            CalldataDetail(**calldata_record.to_dict()) if calldata_record else None
+        ),
+        lattice           = LatticeSnapshot(**lattice_detail) if lattice_detail else None,
+        run_id            = payload_run_id or run_id,
+        tau               = round(dynamic_threshold, 4),
+        deterministic_run = deterministic,
     )
 
     # ── Kriptografik Yürütme İzi (Standart Terminal Formatı) ─────────────────

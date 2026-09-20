@@ -167,6 +167,37 @@ kaçırdığı şey de tam buydu.
 
 ---
 
+## 5b. Arayüz — aynı hatanın üçüncü görünümü
+
+Denetim kapandıktan sonra arayüz incelendi ve **aynı hata sınıfının üçüncü
+örneği** bulundu.
+
+Eski `index.html`, API'ye ulaşamadığında sessizce örnek veriye düşüyordu:
+
+```js
+proof_size_kb: 3.85 · risk_score: 98.52 · prover_time_ms: 56.4
+```
+
+Bu sayılar ölçülmüş değil, elle yazılmıştı. Yani sunucu çökse bile ekran
+dolu görünüyordu — jüri önünde canlı sanılan bir şey aslında sabit bir
+metinden geliyor olacaktı. Bu, bulgu 3b'nin (bayat kanıt geri dönüşü)
+arayüz hâlidir.
+
+**Yapılanlar:**
+
+| Sorun | Çözüm |
+|---|---|
+| Örnek veriye sessiz düşüş | Bağlantı koparsa **38 alanın 38'i `—`'ye döner**, kırmızı bant görünür. Hiçbir sayı gösterilmez. |
+| Verinin çoğu tarayıcıya ulaşmıyordu | Rust'a aşama ölçümlendirmesi (12 aşama), Python'a ayrıntı alanları eklendi. Anahtar boyutları, güvenlik biti, calldata formülü ve kafes matrisi artık arayüze geçiyor. |
+| Arayüz uydurma alan gösterebilirdi | Her bağ `data-bind="yol.alan"` ile işaretli; `test_api_contract.py` yolların Pydantic modelinde **gerçekten var olduğunu** doğruluyor. |
+| CDN bağımlılığı (Tailwind, Chart.js, Google Fonts) | Tamamen kaldırıldı. Projeksiyonda internet olmasa da çalışır; bir test bunu zorluyor. |
+| Kurcalama testi yalnızca birim testindeydi | Artık **canlı hatta** koşuyor ve sonucu arayüzde rozet olarak görünüyor. Reddedilmezse koşu durur. |
+
+Sahne koreografisi `SAHNE_AKISI.md`'de ve arayüze **Sunum Modu** olarak
+gömülü.
+
+---
+
 ## 6. Regresyon korumaları
 
 CI'da beş grep tabanlı koruma var (`regression-guards` işi). Düzeltilen bir
