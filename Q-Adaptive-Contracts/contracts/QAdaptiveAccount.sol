@@ -345,12 +345,11 @@ contract QAdaptiveAccount {
     // Constructor
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// @dev `slither-disable-next-line missing-zero-check`: `_guardianSigner`
-    ///      için sıfır kontrolü KASITLI olarak yok — sıfır adres "guardian yok"
-    ///      demektir. Gerekçe aşağıdaki kurucu yorumunda ve
-    ///      `SLITHER_TRIYAJI.md`'de. Dedektörün tamamı kapatılmadı: aynı
-    ///      dedektör `_entryPoint` ve `_owner` için GERÇEK bir eksik yakalamıştı.
-    // slither-disable-next-line missing-zero-check
+    /// @dev `_guardianSigner` için sıfır kontrolü KASITLI olarak yoktur —
+    ///      sıfır adres "guardian yok" demektir. Susturma yönergesi aşağıda,
+    ///      atamanın tam üstünde duruyor (Slither bulguyu ATAMA satırında
+    ///      bildiriyor, kurucu bildirimi satırında değil). Gerekçe için
+    ///      `SLITHER_TRIYAJI.md`.
     constructor(
         address _entryPoint,
         address _aiCore,
@@ -379,6 +378,13 @@ contract QAdaptiveAccount {
         // Varsayılan politika: skoru oracle'dan al. Gönderenin imza alanındaki
         // iddiası hiçbir koşulda karara girmez.
         riskSource       = RiskSource.AI_CORE_ORACLE;
+
+        // Sifir adres burada GECERLI: "guardian yok" demek ve
+        // `_verifyAttestation` bunu acikca ele aliyor. Sifir kontrolu eklemek
+        // guardian imzasi kaynagini devre disi birakma yetenegini ortadan
+        // kaldirirdi. Dedektorun TAMAMI kapatilmadi — ayni dedektor
+        // `_entryPoint` ve `_owner` icin gercek bir eksik yakalamisti.
+        // slither-disable-next-line missing-zero-check
         guardianSigner   = _guardianSigner;
 
         // Zırh "Standard" (sıra 0) ile başlar ve buradan yalnızca yükselebilir.

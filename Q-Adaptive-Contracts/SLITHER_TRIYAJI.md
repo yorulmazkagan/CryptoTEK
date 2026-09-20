@@ -105,10 +105,32 @@ için gerçek bir eksik yakalamıştı (bkz. §1). Bunun yerine tam o iki satır
 koda yorum olarak yazıldı. `test_guardian_sifira_ayarlanabiliyor` bu
 kararın bilinçli olduğunu sabitliyor.
 
-> **Doğrulanmadı:** Bu iki susturma yorumu ve yeni setter'ların bulguları
-> kapattığı yerelde sınanamadı (Slither pip ile kuruluyor, ağ erişimi
-> yoktu). Bir sonraki CI koşusunda doğrulanacak. Susturma beklendiği gibi
-> çalışmazsa burada gerekçesiyle güncellenecek — dedektör kapatılmayacak.
+#### Susturma yönergesi nereye konur — koşu #13'ün dersi
+
+İlk denemede yönergeyi **kurucu bildiriminin** üstüne koydum. `setGuardianSigner`
+için işe yaradı ama kurucu için yaramadı; 6 bulgudan 5'i kapandı, biri kaldı:
+
+```
+QAdaptiveAccount.constructor(...)._guardianSigner (QAdaptiveAccount.sol#359)
+    lacks a zero-check on :
+        - guardianSigner = _guardianSigner (QAdaptiveAccount.sol#382)
+```
+
+Sebep: `slither-disable-next-line` **bir sonraki KAYNAK SATIRINI** susturur.
+Bulgu ise `constructor(` satırında değil, **atama satırında** (#382)
+bildiriliyordu — çok satırlı imzada parametre ayrı bir satırdaydı.
+
+`setGuardianSigner`'da işe yaramasının sebebi, orada bildirilen satırın
+zaten fonksiyon bildirimi olmasıydı.
+
+**Kural:** Yönergeyi fonksiyonun üstüne değil, Slither'ın çıktısında
+gösterdiği **satırın tam üstüne** koy. Çıktıdaki `dosya.sol#NNN` numarasına
+bak.
+
+> **Doğrulanmadı:** Düzeltilmiş yönerge yerleşimi yerelde sınanamadı
+> (Slither pip ile kuruluyor, ağ erişimi yok). Bir sonraki CI koşusunda
+> görülecek. Yine tutmazsa burada gerekçesiyle güncellenecek — dedektör
+> kapatılmayacak.
 
 ---
 
