@@ -140,22 +140,6 @@ button.on{border-color:var(--amber);color:var(--amber)}
 .logic{font-family:var(--mono);font-size:12px;padding:4px 0;
   border-bottom:1px dashed var(--line)}
 .logic:last-child{border:0}
-/* Sınırlar paneli yalnızca SUNUM MODUNDA görünür.
-   Gerekçe: jüriye bu maddeleri okuyacağımız an sunumun kendisi; boştaki
-   konsolda sürekli durması ekranı meşgul ediyordu. Panel silinmedi,
-   sahnelendi — `test_sinirlar_paneli_eksiksiz` hem içeriğini hem de
-   sunum moduna bağlı olduğunu doğruluyor. */
-#limits{display:none;background:#1a1408;border:1px solid #6b4d0f;
-  border-radius:10px;padding:11px 14px;margin-top:12px}
-#limits.show{display:block}
-#limits h3{color:var(--amber)}
-#limits li{font-size:12.5px;margin:3px 0 3px 17px;color:#e9d9b3}
-
-/* Açık temada panel koyu kahve kalıyordu — sayfanın geri kalanıyla
-   uyumsuzdu. Amber kimliği korunur, zemin ve metin aydınlatılır. */
-:root[data-theme="light"] #limits{background:#fdf6e3;border-color:#c9a227}
-:root[data-theme="light"] #limits li{color:#4a3a12}
-
 /* ── Alt şerit ─────────────────────────────────────────────────────────── */
 details{background:var(--panel);border:1px solid var(--line);
   border-radius:10px;margin-top:9px}
@@ -168,13 +152,6 @@ table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px
 th,td{text-align:left;padding:4px 7px;border-bottom:1px solid var(--line)}
 th{color:var(--dim2);font-weight:600}
 
-/* ── Sunum modu ────────────────────────────────────────────────────────── */
-#stage{display:none;background:var(--panel);border:1px solid var(--violet);
-  border-radius:10px;padding:11px 15px;margin-bottom:12px}
-#stage.show{display:block}
-#stage .step{font-size:16px;font-weight:650}
-#stage .obj{font-size:13px;color:var(--amber);margin-top:3px}
-#stage .nav{font-size:12px;color:var(--dim2);margin-top:6px}
 .pill{font-size:11px;padding:2px 8px;border-radius:999px;
   background:var(--panel2);border:1px solid var(--line);font-family:var(--mono)}
 .pill.ok{border-color:var(--ok);color:var(--ok)}
@@ -205,7 +182,6 @@ try {
   <span class="chip">kuyruk <b class="mono" data-bind="ai_metrics.queue_size">—</b></span>
   <span style="flex:1"></span>
   <button id="themeBtn" title="Koyu / açık tema (T)">☾ Koyu</button>
-  <button id="presBtn">Sunum Modu</button>
 </div>
 
 <div id="offline">
@@ -217,10 +193,6 @@ try {
   </div>
 </div>
 
-<div id="stage">
-  <div class="step" id="stepTitle">—</div>
-  <div class="obj" id="stepObj">—</div>
-  <div class="nav">← → ile gezin · Enter ile koştur · <b id="stepNo">0/6</b> · Esc ile çık</div>
 </div>
 
 <!-- ═══ BÖLGE A — NEDENSELLİK BORU HATTI ═══════════════════════════════ -->
@@ -328,24 +300,6 @@ try {
   </div>
 </div>
 
-<div id="limits">
-  <h3 style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">
-    İddia Etmediklerimiz
-  </h3>
-  <ul>
-    <li>STARK, ML-DSA doğrulamasını <b>devre içinde ispatlamıyor</b>.</li>
-    <li>Kanıt özlü, <b>ama gizlediği bir sır yok</b>. ρ' bu ekranda yayınlanıyor;
-        s1, s2 ve A matrisi ondan yeniden hesaplanabilir. Buradaki
-        &laquo;sıfır bilgi&raquo; <b>nominal</b> — gizliliği değil
-        <b>tekrarlanabilirliği</b> seçtik: jüri aynı girdiyle aynı kanıtı üretebilsin.</li>
-    <li>Rotasyon kafes probleminin zorluğunu <b>artırmıyor</b> — ileri güvenlik sağlıyor.</li>
-    <li>AI <b>kuantum saldırısı tespit etmiyor</b>; davranış anomalisi görüyor.</li>
-    <li>Eğitim verisi <b>kontrollü sentetik</b> — canlı zincirden değil.</li>
-    <li>Kanıt <b>zincirde doğrulanmıyor</b>; zincirde dönem çapası var.</li>
-    <li>Bağımsız güvenlik denetimi <b>yapılmadı</b>; mainnet konuşlandırması <b>yok</b>.</li>
-    <li>50 ECDSA imzası 3.250 B — <b>bir STARK kanıtından küçük</b>. Takas post-kuantum güvenliği.</li>
-  </ul>
-</div>
 
 <details>
   <summary>AIR sınır koşulları · zincire giden değerler</summary>
@@ -400,22 +354,6 @@ const ASAMA_ADI = {
   stark_dogrulama:  "yerel doğrulama",
   payload_yazma:    "payload yazma",
 };
-
-/* Sunum koreografisi — her adım bir jüri itirazını cevaplar. */
-const KOREOGRAFI = [
-  {ad:"Standart kullanıcı", sc:"standart",
-   obj:"“Her işlemde ağır kripto mu koşuyorsunuz?” → Hayır. risk < τ, kanıt üretilmiyor."},
-  {ad:"Drainer saldırısı", sc:"drainer",
-   obj:"“AI kararı kriptografiyi gerçekten etkiliyor mu?” → Kafes 4×4'ten 8×7'ye büyüdü, imza 2.420 → 4.627 B."},
-  {ad:"Kurcalama testi", sc:null,
-   obj:"“İmza doğrulaması gerçek mi?” → Kurcalanmış mesaj CANLI hatta reddedildi, testte değil."},
-  {ad:"Rotasyon", sc:"drainer",
-   obj:"“Rotasyon gerçek mi, gizli anahtar sabit mi kalıyor?” → ρ' değişti, tüm kafes hücreleri değişti."},
-  {ad:"Determinizm", sc:"drainer",
-   obj:"“Bu sadece rastgele sayı üretimi değil mi?” → Aynı girdi birebir aynı ρ' ve imzayı veriyor."},
-  {ad:"Sınırlar", sc:null,
-   obj:"“Neyi iddia etmiyorsunuz?” → Yedi sınır ekranda, savunmacı değil hazırlıklı."},
-];
 
 /* ═══ Yardımcılar ════════════════════════════════════════════════════════ */
 const $  = (s) => document.querySelector(s);
@@ -624,38 +562,16 @@ function senaryo(ad){
 $$("[data-sc]").forEach(b=> b.addEventListener("click", ()=> senaryo(b.dataset.sc)));
 $("#run").addEventListener("click", kostur);
 
-/* ═══ Sunum modu ═════════════════════════════════════════════════════════ */
-let sunum = false, adim = 0;
-function sunumCiz(){
-  const k = KOREOGRAFI[adim];
-  $("#stepTitle").textContent = (adim+1) + ". " + k.ad;
-  $("#stepObj").textContent   = k.obj;
-  $("#stepNo").textContent    = (adim+1) + "/" + KOREOGRAFI.length;
-  if (k.sc) senaryo(k.sc);
-}
-function sunumAc(v){
-  sunum = v; adim = 0;
-  $("#stage").classList.toggle("show", v);
-  // Sınırlar paneli sahneyle birlikte açılır: jüriye "iddia etmediklerimizi"
-  // okuyacağımız an sunumun kendisi.
-  $("#limits").classList.toggle("show", v);
-  $("#presBtn").classList.toggle("on", v);
-  if (v) sunumCiz();
-}
-$("#presBtn").addEventListener("click", ()=> sunumAc(!sunum));
+/* ═══ Klavye ═════════════════════════════════════════════════════════════
+   T  → tema değiştir
+   ⏎  → koşuyu tetikle
+   Bir metin alanına yazarken tetiklenmemeli.                              */
 document.addEventListener("keydown", e=>{
-  // Tema kısayolu sunum modundan bağımsız çalışır: salonun ışığı sunum
-  // sırasında da açılabilir. Bir alana yazarken tetiklenmemeli.
-  if ((e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey && !e.altKey){
-    var h = document.activeElement;
-    if (!h || !/^(INPUT|TEXTAREA|SELECT)$/.test(h.tagName)){
-      temaYaz(!temaAcikMi()); return;
-    }
-  }
-  if (e.key === "Escape"){ sunumAc(false); return; }
-  if (!sunum) return;
-  if (e.key === "ArrowRight" && adim < KOREOGRAFI.length-1){ adim++; sunumCiz(); }
-  if (e.key === "ArrowLeft"  && adim > 0)                  { adim--; sunumCiz(); }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const h = document.activeElement;
+  if (h && /^(INPUT|TEXTAREA|SELECT)$/.test(h.tagName)) return;
+
+  if (e.key === "t" || e.key === "T"){ temaYaz(!temaAcikMi()); return; }
   if (e.key === "Enter") kostur();
 });
 

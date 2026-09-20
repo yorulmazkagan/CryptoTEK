@@ -13,7 +13,7 @@
 <br/>
 <br/>
 
-<img src="https://img.shields.io/badge/Tests-243%20Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white" alt="243 tests passing"/>
+<img src="https://img.shields.io/badge/Tests-244%20Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white" alt="244 tests passing"/>
 <img src="https://img.shields.io/badge/ONNX%20Latency-measured%20per%20run-00B4D8?style=for-the-badge" alt="ONNX latency measured per run"/>
 <img src="https://img.shields.io/badge/STARK%20Proof%20Size-measured%20per%20run-blueviolet?style=for-the-badge" alt="STARK proof size measured per run"/>
 <img src="https://img.shields.io/badge/Prover%20Time-measured%20per%20run-blue?style=for-the-badge" alt="Prover time measured per run"/>
@@ -150,12 +150,13 @@ The 3-dimensional feature vector is then fed into the **exported ONNX Isolation 
 
 | Sub-component | Specification |
 |---|---|
-| Model type | Isolation Forest (100 trees, contamination = 0.05) |
-| Feature dimensions | 16 |
-| Inference runtime | ONNX Runtime 1.17+ (CPU) |
-| Calibration method | Platt Scaling (sigmoid fit on holdout) |
-| Inference latency | **measured per run** — ~10 ms observed on a single-thread CPU; written to the `onnx_cikarim` pipeline stage on every request |
-| Decision threshold | NAS ≥ 0.72 → anomaly flag raised |
+| Model type | Isolation Forest (**300 trees**, contamination = **0.03**) |
+| Feature dimensions | **3** — `Islem_Sikligi`, `IP_Sapmasi`, `Gas_Sapmasi` |
+| Training data | **Controlled synthetic.** Not collected from a live chain. Producing labelled attack data from real traffic is a separate effort and was out of scope — stated here rather than hidden. |
+| Inference runtime | ONNX Runtime (CPU) |
+| Calibration method | Platt scaling (sigmoid fit on holdout) |
+| Inference latency | **measured per run** — 8.8–10.1 ms across 5 runs on one machine; written to the `onnx_cikarim` pipeline stage on every request |
+| Decision threshold | **Dynamic.** τ(t) = 60.0 + 0.15·σ²(gas) + 0.08·σ²(freq), clamped to [55.0, 90.0]. The anomaly flag is raised when `risk ≥ τ(t)`. |
 
 ---
 
@@ -308,7 +309,7 @@ function validateUserOp(
 
 ## 5. Measured Benchmark Metrics
 
-> **Nothing here is "certified."** An earlier revision of this section called these *certified results* and cited `12/12 tests passing`. No independent body certified anything — these are our own measurements. The suite is now **243 automated tests** (Rust 61 · Solidity 146 · parity 9 · attestation 18 · API-contract 9).
+> **Nothing here is "certified."** An earlier revision of this section called these *certified results* and cited `12/12 tests passing`. No independent body certified anything — these are our own measurements. The suite is now **244 automated tests** (Rust 61 · Solidity 146 · parity 9 · attestation 18 · API-contract 10).
 
 All numbers below were measured on a single development machine and vary with hardware. Every timing is re-measured on each run and written into the API response, so you can check them yourself instead of trusting this table.
 
@@ -474,30 +475,25 @@ actually evaluated it.
 
 ---
 
-### 5 — What we do not claim
+### What we do not claim
 
-![Limits panel](./images/05_iddia_etmedik.png)
+The console no longer carries a limits panel, and there is no presentation
+mode — the UI is a single working screen. The limits themselves did not go
+away; they live in the documents, where they are stated at length:
 
-This panel opens with **Presentation Mode** — it is staged, not buried. The
-default console keeps the working area clear; the moment the system is walked
-through for an audience, the limits go up on screen alongside everything else.
+| Limit | Where it is stated |
+|---|---|
+| The STARK **does not prove ML-DSA verification** in-circuit | §3.8 and §9 of the teaching document; §4.1 of the jury booklet |
+| The proof is succinct but **hides no secret** — ρ' is published, so s1, s2 and A can be recomputed by anyone | §3.8 of the teaching document; §4.2 of the jury booklet |
+| The proof is **not verified on-chain**; the contract checks its length and an ECDSA attestation | §5.3 of the teaching document; §4.3 of the jury booklet |
+| **Nothing is deployed** to any public network | §9.2 and §12.4; §4.4 of the jury booklet |
+| Training data is **controlled synthetic**, not collected from a live chain | §3.10; §4.8 of the jury booklet |
+| 50 ECDSA signatures are 3,250 bytes — **smaller than one STARK proof** | §6.4; §4.10 of the jury booklet |
+| No independent security audit; branch coverage is 82.55%, not 100% | §9.2 and §10.2 |
 
-It is the on-stage form of the lesson that produced this audit: state the
-limits before someone else finds them.
-
-It says, among other things, that the STARK **does not prove ML-DSA
-verification in-circuit**, that the proof is **succinct but hides no secret**
-(ρ' is published on this very screen, so s1, s2 and the matrix A can be
-recomputed by anyone — the "zero-knowledge" here is nominal; we chose
-reproducibility over privacy so the jury can regenerate the same proof), that
-the proof is **not verified on-chain**, and that **no independent security
-audit and no mainnet deployment** exist.
-
-A test reads this panel and fails the build if any of these entries is removed.
-Because the panel is now hidden by default, the same test also asserts that it
-is still wired to Presentation Mode — otherwise leaving the markup in place
-while deleting the one line that reveals it would hide the limits and still
-pass.
+A test reads this README and fails the build if any of these entries
+disappears. The guarantee moved from the screen to the documents; it was not
+dropped.
 
 ---
 
@@ -553,11 +549,10 @@ Q-ADAPTIVE (AI Guardian)
 │   ├── 01_ust_serit*.png              ← Status strip
 │   ├── 02_nedensellik*.png            ← Transaction -> inference -> armor -> proof
 │   ├── 03_yurutme_izi*.png            ← 11-stage execution trace
-│   ├── 04_kafes_ve_karar*.png         ← Lattice, signature lengths, rationale
-│   └── 05_iddia_etmedik*.png          ← Limits panel
+│   └── 04_kafes_ve_karar*.png         ← Lattice, signature lengths, rationale
 │
 ├── docs/
-│   ├── integration_test_report.md     ← Integration test report (243 tests)
+│   ├── integration_test_report.md     ← Integration test report (244 tests)
 │   ├── references_guide.md            ← Academic references & citations
 │   └── presentation_blueprint_guide.md
 │
@@ -695,9 +690,9 @@ is an estimate.
 | Rust (ZK + PQC) | `cd Q-Adaptive-ZK && cargo test` | **61 passed** |
 | Solidity | `cd Q-Adaptive-Contracts && forge test` | **142 passed** (4 fork tests skip without `ETH_RPC_URL`) |
 | Cross-layer parity | `python3 Q-Adaptive-AI/test_layer_parity.py` | **9 passed** |
-| API ↔ UI contract | `python3 Q-Adaptive-AI/test_api_contract.py` | **9 passed** (38 bound fields verified) |
+| API ↔ UI contract | `python3 Q-Adaptive-AI/test_api_contract.py` | **10 passed** (38 bound fields verified) |
 | Attestation crypto | `python3 Q-Adaptive-AI/test_attestation.py` | **18 passed** |
-| **Total (automated tests)** | | **243 passed** |
+| **Total (automated tests)** | | **244 passed** |
 | ONNX ↔ sklearn parity | `cd Q-Adaptive-AI && python3 test_onnx_inference.py` | 3 scenarios, exit 0 |
 | API integration | `cd Q-Adaptive-AI && python3 test_api_client.py` | requires a running server |
 

@@ -161,59 +161,57 @@ class UydurmaVeriTest(unittest.TestCase):
             "Bu değerler ölçülmüş değil, elle yazılmıştı.",
         )
 
-    def test_sinirlar_paneli_eksiksiz(self):
-        """«İddia Etmediklerimiz» paneli, bilinen her sınırı saymalı.
+    def test_sinirlar_belgelerde_yaziyor(self):
+        """Bilinen her sınır README'de yazılı olmalı.
 
-        Bu panel, denetimin asıl dersinin sahnedeki karşılığı: jüri bir sınırı
-        bizden ÖNCE bulmasın. Bir madde sessizce silinirse — ya da yeni bir
-        sınır ortaya çıkıp panele eklenmezse — bu test kırılır.
+        Bu test eskiden arayüzdeki «İddia Etmediklerimiz» panelini okuyordu.
+        Panel, Sunum Modu ile birlikte arayüzden kaldırıldı — yani sınırlar
+        artık ekranda değil, BELGELERDE duruyor.
 
-        Özellikle «sıfır bilgi» maddesi: ρ' arayüzde yayınlandığı için s1, s2
-        ve A matrisi herkesçe yeniden hesaplanabilir. Yani kanıt özlüdür ama
-        bir sır gizlemez. Bunu söylemezsek, soran ilk jüri üyesinde yakalanırız.
+        Garanti ortadan kalkmadı, yer değiştirdi: bir sınır sessizce
+        silinirse yapı yine kırılır. Denetimin asıl dersi buydu ve o ders
+        arayüze değil, iddiaya bağlıydı:
 
-        Panel artık varsayılan ekranda DEĞİL, Sunum Modu ile açılıyor. Bu,
-        testin işini zorlaştırıyor: paneli HTML'de bırakıp sunum moduna
-        bağlayan satırı silmek, paneli hiç görünmez yapar ama içerik
-        kontrolünden kaçardı. Bu yüzden aşağıda bağlantının kendisi de
-        doğrulanıyor.
+            Bir sınırı listeden çıkarmak onu ortadan kaldırmaz —
+            yalnızca başkasının bulmasını bekler.
+
+        Sınırların ayrıntılı anlatımı iki PDF'te sürüyor: öğretici belgenin
+        9. bölümü ve jüri kitapçığının 4. bölümü.
         """
-        panel = self.html.split('id="limits"', 1)
-        self.assertEqual(len(panel), 2, "«İddia Etmediklerimiz» paneli kayıp")
-        panel = panel[1].split("</div>", 1)[0]
+        readme = (
+            Path(__file__).resolve().parent.parent / "README.md"
+        ).read_text(encoding="utf-8")
 
         zorunlu = {
-            "STARK ML-DSA doğrulamıyor": "devre içinde ispatlamıyor",
-            "ZK nominal — sır gizlenmiyor": "gizlediği bir sır yok",
-            "rotasyon zorluk artırmıyor": "artırmıyor",
-            "AI kuantum tespit etmiyor": "kuantum saldırısı tespit etmiyor",
-            "eğitim verisi sentetik": "kontrollü sentetik",
-            "zincirde doğrulanmıyor": "zincirde doğrulanmıyor",
-            "denetim/konuşlandırma yok": "yapılmadı",
-            "ECDSA calldata'da kazanıyor": "bir STARK kanıtından küçük",
+            "STARK ML-DSA doğrulamıyor": "does not prove ML-DSA",
+            "ZK nominal — sır gizlenmiyor": "hides no secret",
+            "zincirde doğrulanmıyor": "not implemented",
+            "konuşlandırma yok": "Nothing is deployed",
+            "ECDSA calldata'da kazanıyor": "ECDSA is smaller",
+            "eğitim verisi sentetik": "synthetic",
         }
 
-        eksik = [ad for ad, iz in zorunlu.items() if iz not in panel]
+        eksik = [ad for ad, iz in zorunlu.items() if iz not in readme]
         self.assertEqual(
             eksik, [],
-            f"Sınırlar panelinden şu madde(ler) düşmüş: {eksik}. "
-            "Bir sınırı panelden çıkarmak, onu ortadan kaldırmaz — "
-            "yalnızca jürinin bulmasını bekler.",
+            f"README'den şu sınır(lar) düşmüş: {eksik}. "
+            "Bir sınırı belgeden çıkarmak, onu ortadan kaldırmaz.",
         )
 
-        # Panel gizli olduğuna göre, onu AÇAN yol da bozulmamış olmalı.
-        self.assertIn(
-            '$("#limits").classList.toggle("show"', self.html,
-            "Sınırlar paneli Sunum Modu'na bağlı değil — panel HTML'de duruyor "
-            "ama hiçbir zaman görünmüyor. Sessizce kaldırılmış olur.",
+    def test_arayuz_sinir_paneli_iddia_etmiyor(self):
+        """Arayüzde kaldırılmış bir paneli anlatan artık kalmamalı.
+
+        Panel kaldırıldı. Eğer HTML'de hâlâ «İddia Etmediklerimiz» geçiyorsa,
+        ya panel yarım silinmiştir ya da geri gelmiştir; her iki durumda da
+        belgelerle arayüz ayrışır.
+        """
+        self.assertNotIn(
+            "İddia Etmediklerimiz", self.html,
+            "Sınırlar paneli arayüzden kaldırıldı ama HTML'de izi kalmış.",
         )
-        self.assertRegex(
-            self.html, r"#limits\s*\{[^}]*display:\s*none",
-            "#limits varsayılanda gizli olmalı (Sunum Modu ile açılır).",
-        )
-        self.assertRegex(
-            self.html, r"#limits\.show\s*\{[^}]*display:\s*block",
-            "#limits.show kuralı yok — sunum modunda da görünmez.",
+        self.assertNotIn(
+            'id="limits"', self.html,
+            "#limits bloğu hâlâ HTML'de.",
         )
 
     def test_olculmeyen_asama_python_tarafindan_eklenmiyor(self):

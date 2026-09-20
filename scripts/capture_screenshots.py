@@ -64,15 +64,14 @@ OLCEK = 2  # deviceScaleFactor — README'de net görünmesi için 2x
 
 # (element seçici, dosya adı, açıklama, görüntü öncesi çalıştırılacak JS)
 #
-# Sınırlar paneli varsayılan ekranda gizli; yalnızca Sunum Modu'nda açılıyor.
-# Görüntüsünü alabilmek için önce o modu açmak gerekiyor.
+# Dördüncü alan, görüntü alınmadan önce çalıştırılacak JS. Şu an hiçbir
+# bölüm için gerekmiyor; alan duruyor ki bir bölüm ileride katlanır ya da
+# gizlenir hâle gelirse betiğin yapısını değiştirmek gerekmesin.
 BOLUMLER = [
     ("#top",         "01_ust_serit",      "Bağlantı, koşu kimliği, τ(t), zırh, determinizm", None),
     ("#nedensellik", "02_nedensellik",    "İşlem → Sezgi → Zırh → Kanıt akışı", None),
     ("#pipe",        "03_yurutme_izi",    "11 aşamalı boru hattı, her süre ölçülmüş", None),
     ("#kafes",       "04_kafes_ve_karar", "Kafes matrisi, imza uzunlukları, karar gerekçesi", None),
-    ("#limits",      "05_iddia_etmedik",  "İddia Etmediklerimiz (Sunum Modu)",
-     "document.querySelector('#presBtn').click()"),
 ]
 
 

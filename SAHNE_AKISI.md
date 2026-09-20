@@ -3,10 +3,19 @@
 **Takım:** CryptoTEK · TAKIM ID 909630
 **Arayüz:** `stitch_q_adaptive_ai_guardian_dashboards/index.html`
 
-Bu koreografi arayüze **gömülüdür**. `Sunum Modu` düğmesine bas, `→` ve `←`
-tuşlarıyla adımlar arasında gez, `Enter` ile koşuyu tetikle, `Esc` ile çık.
-Her adımda hangi jüri itirazını cevapladığın ekranda yazılı durur — sahnede
-menü aramak yok.
+Bu koreografi **bu belgede** yaşar; arayüze gömülü değildir. Konsolda
+Sunum Modu diye bir düğme yoktu — kaldırıldı ve arayüz tek bir çalışma
+ekranı olarak sadeleştirildi.
+
+Sahnede yalnızca iki klavye kısayolu var:
+
+| Tuş | Ne yapar |
+|---|---|
+| `Enter` | Koşuyu tetikler |
+| `T` | Koyu / açık tema |
+
+Adımlar arasında geçişi **sen** yaparsın: ilgili senaryo düğmesine bas,
+`Enter` ile koştur, aşağıdaki metni anlat. Bu belgeyi yanında bulundur.
 
 ---
 
@@ -117,8 +126,12 @@ imza.
 
 **Yap:** Alttaki amber paneli göster.
 
-**Göster:** **İddia Etmediklerimiz** — sekiz madde. Panel Sunum Modu ile
-açılıyor; bu adımda zaten o moddasınız, yani ekranda duruyor.
+**Göster:** Bu adımda ekranda gösterecek bir panel **yok** — sınırlar
+arayüzden kaldırıldı. Sınırları **sözlü** anlat ve jüri kitapçığının
+4. bölümünü (Zor ve tuzak sorular) yanında bulundur.
+
+En kritik üçü: STARK imza doğrulamasını devre içinde ispatlamıyor · kanıt
+özlü ama sır gizlemiyor (ρ' yayınlanıyor) · hiçbir ağa konuşlandırılmadı.
 
 > **İtiraz:** *"Neyi iddia etmiyorsunuz?"* (ya da Q&A'de gelecek herhangi
 > bir sınır sorusu)

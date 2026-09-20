@@ -32,8 +32,8 @@ tahmin değildir. Çalıştırılamamış olanlar **§7'de ayrıca listelenmişt
 | Solidity | `cd Q-Adaptive-Contracts && forge test` | **142 geçti, 4 atlandı** (önce 0) |
 | Katman eşitliği | `python3 Q-Adaptive-AI/test_layer_parity.py` | **9 geçti** (önce yoktu) |
 | Attestation kriptosu | `python3 Q-Adaptive-AI/test_attestation.py` | **18 geçti** (önce yoktu) |
-| API ↔ arayüz sözleşmesi | `python3 Q-Adaptive-AI/test_api_contract.py` | **9 geçti** (önce yoktu) |
-| **Toplam otomatik test** | | **243 geçti** |
+| API ↔ arayüz sözleşmesi | `python3 Q-Adaptive-AI/test_api_contract.py` | **10 geçti** (önce yoktu) |
+| **Toplam otomatik test** | | **244 geçti** |
 | ONNX ↔ sklearn parity | `cd Q-Adaptive-AI && python3 test_onnx_inference.py` | 3 senaryo, çıkış kodu 0 |
 
 Solidity testlerinin **12'si fuzz/değişmez** testidir; her biri 512 koşu yapar.
