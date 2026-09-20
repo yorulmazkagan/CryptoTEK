@@ -32,8 +32,8 @@ tahmin değildir. Çalıştırılamamış olanlar **§7'de ayrıca listelenmişt
 | Solidity | `cd Q-Adaptive-Contracts && forge test` | **142 geçti, 4 atlandı** (önce 0) |
 | Katman eşitliği | `python3 Q-Adaptive-AI/test_layer_parity.py` | **9 geçti** (önce yoktu) |
 | Attestation kriptosu | `python3 Q-Adaptive-AI/test_attestation.py` | **18 geçti** (önce yoktu) |
-| API ↔ arayüz sözleşmesi | `python3 Q-Adaptive-AI/test_api_contract.py` | **8 geçti** (önce yoktu) |
-| **Toplam otomatik test** | | **242 geçti** |
+| API ↔ arayüz sözleşmesi | `python3 Q-Adaptive-AI/test_api_contract.py` | **9 geçti** (önce yoktu) |
+| **Toplam otomatik test** | | **243 geçti** |
 | ONNX ↔ sklearn parity | `cd Q-Adaptive-AI && python3 test_onnx_inference.py` | 3 senaryo, çıkış kodu 0 |
 
 Solidity testlerinin **12'si fuzz/değişmez** testidir; her biri 512 koşu yapar.
@@ -191,7 +191,7 @@ arayüz hâlidir.
 | Sorun | Çözüm |
 |---|---|
 | Örnek veriye sessiz düşüş | Bağlantı koparsa **38 alanın 38'i `—`'ye döner**, kırmızı bant görünür. Hiçbir sayı gösterilmez. |
-| Verinin çoğu tarayıcıya ulaşmıyordu | Rust'a aşama ölçümlendirmesi (12 aşama), Python'a ayrıntı alanları eklendi. Anahtar boyutları, güvenlik biti, calldata formülü ve kafes matrisi artık arayüze geçiyor. |
+| Verinin çoğu tarayıcıya ulaşmıyordu | Rust'a aşama ölçümlendirmesi (11 aşama), Python'a ayrıntı alanları eklendi. Anahtar boyutları, güvenlik biti, calldata formülü ve kafes matrisi artık arayüze geçiyor. |
 | Arayüz uydurma alan gösterebilirdi | Her bağ `data-bind="yol.alan"` ile işaretli; `test_api_contract.py` yolların Pydantic modelinde **gerçekten var olduğunu** doğruluyor. |
 | CDN bağımlılığı (Tailwind, Chart.js, Google Fonts) | Tamamen kaldırıldı. Projeksiyonda internet olmasa da çalışır; bir test bunu zorluyor. |
 | Kurcalama testi yalnızca birim testindeydi | Artık **canlı hatta** koşuyor ve sonucu arayüzde rozet olarak görünüyor. Reddedilmezse koşu durur. |

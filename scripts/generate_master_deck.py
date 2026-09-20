@@ -1216,7 +1216,7 @@ def main():
                 ["ZK-STARK İspat Süresi", "0,4-21 ms (kademeye göre)", "< 100,0 ms", "Başarılı"],
                 ["Calldata Tasarrufu (50'lik parti)", "%96,6-98,4", "> %90,0", "Başarılı"],
                 ["validateUserOp Gazı", "26k-148k (medyan 74k)", "< 200,000 Gas", "Başarılı"],
-                ["Otomatik Test", "242 / 242 Geçti", "242 Test", "Başarılı"],
+                ["Otomatik Test", "243 / 243 Geçti", "243 Test", "Başarılı"],
                 ["Solidity Dal Kapsamı", "%82,55 (123/149)", "ölçülür", "%100 DEĞİL - açıkça bildiriliyor"]
             ]
             add_table(slide, "Sistem Başarı ve Performans Metrikleri Özeti", headers, rows)

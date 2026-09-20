@@ -29,6 +29,10 @@
 -->
 
 <style>
+/* Koyu tema — VARSAYILAN.
+   Sahne karartılmış bir salonda projeksiyonla sunulacak; açık tema orada
+   göz yorar ve kontrast kaybeder. Açık tema, ekran görüntüsü almak ve
+   aydınlık odada dizüstünden incelemek için var. */
 :root{
   --bg:#070d18; --panel:#0e1729; --panel2:#131f36; --line:#22304d;
   --ink:#e8eefc; --dim2:#7d8ba6;
@@ -36,6 +40,17 @@
   --ok:#34d399; --bad:#f87171;
   --mono:ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace;
   --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+}
+
+/* Açık tema.
+   Vurgu renkleri yeniden seçildi — koyu zemin için ayarlanmış tonlar
+   (örn. #2dd4bf) beyaz üstünde WCAG AA kontrastını tutturmuyordu.
+   Her biri #ffffff'e karşı >= 4.5:1 olacak şekilde koyulaştırıldı. */
+:root[data-theme="light"]{
+  --bg:#f4f6fb; --panel:#ffffff; --panel2:#eef2f9; --line:#cfd8e8;
+  --ink:#111a2e; --dim2:#5a6780;
+  --teal:#0d7d6f; --coral:#c2334d; --amber:#8a5a00; --violet:#6d4bc4;
+  --ok:#0f7a46; --bad:#c2334d;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans);
@@ -154,6 +169,18 @@ th{color:var(--dim2);font-weight:600}
 .pill.ok{border-color:var(--ok);color:var(--ok)}
 .pill.bad{border-color:var(--bad);color:var(--bad)}
 </style>
+
+<script>
+// Tema, ilk boyamadan ÖNCE uygulanır. Bu betik <body>'den sonra çalışsaydı
+// sayfa bir kare koyu görünüp sonra açığa atlardı — projeksiyonda göze çarpar.
+try {
+  var kayitli = localStorage.getItem("qadaptive-tema");
+  if (kayitli === "light") document.documentElement.setAttribute("data-theme", "light");
+} catch (e) {
+  // localStorage kapalı olabilir (gizli sekme, katı çerez politikası).
+  // Tema bir tercih; erişilemiyorsa varsayılan koyu temada kalırız.
+}
+</script>
 </head>
 <body>
 
@@ -166,6 +193,7 @@ th{color:var(--dim2);font-weight:600}
   <span class="chip">determinizm <b class="mono" data-bind="deterministic_run">—</b></span>
   <span class="chip">kuyruk <b class="mono" data-bind="ai_metrics.queue_size">—</b></span>
   <span style="flex:1"></span>
+  <button id="themeBtn" title="Koyu / açık tema (T)">☾ Koyu</button>
   <button id="presBtn">Sunum Modu</button>
 </div>
 
@@ -185,7 +213,7 @@ th{color:var(--dim2);font-weight:600}
 </div>
 
 <!-- ═══ BÖLGE A — NEDENSELLİK BORU HATTI ═══════════════════════════════ -->
-<div class="grid">
+<div class="grid" id="nedensellik">
 
   <div class="card">
     <h3><span class="n">1</span>İşlem</h3>
@@ -257,7 +285,7 @@ th{color:var(--dim2);font-weight:600}
 </div>
 
 <!-- ═══ BÖLGE B + C ═══════════════════════════════════════════════════ -->
-<div class="grid" style="grid-template-columns:1.1fr 1fr 1.25fr;margin-top:12px">
+<div class="grid" id="kafes" style="grid-template-columns:1.1fr 1fr 1.25fr;margin-top:12px">
 
   <div class="card">
     <h3>Kafes büyümesi</h3>
@@ -396,6 +424,17 @@ function bicimle(v, yol){
   if (yol.endsWith("_ms") || yol === "ai_metrics.dynamic_threshold"
       || yol === "ai_metrics.risk_score" || yol === "tau")
     return v.toFixed(2);
+
+  // Yüzdeler: işaretsiz ve dört basamaklı basılıyordu ("98,1254"). Bir
+  // oranın yüzde olduğu ekrandan anlaşılmalı; iki basamak da yeterli.
+  if (yol.endsWith("_pct"))
+    return "%" + v.toLocaleString("tr-TR", {minimumFractionDigits:2,
+                                            maximumFractionDigits:2});
+
+  // Bayt sayıları tam sayıdır; binlik ayracı okunurluğu artırır.
+  if (yol.endsWith("_bytes"))
+    return v.toLocaleString("tr-TR", {maximumFractionDigits:0}) + " B";
+
   return v.toLocaleString("tr-TR", {maximumFractionDigits:4});
 }
 
@@ -591,12 +630,36 @@ function sunumAc(v){
 }
 $("#presBtn").addEventListener("click", ()=> sunumAc(!sunum));
 document.addEventListener("keydown", e=>{
+  // Tema kısayolu sunum modundan bağımsız çalışır: salonun ışığı sunum
+  // sırasında da açılabilir. Bir alana yazarken tetiklenmemeli.
+  if ((e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey && !e.altKey){
+    var h = document.activeElement;
+    if (!h || !/^(INPUT|TEXTAREA|SELECT)$/.test(h.tagName)){
+      temaYaz(!temaAcikMi()); return;
+    }
+  }
   if (e.key === "Escape"){ sunumAc(false); return; }
   if (!sunum) return;
   if (e.key === "ArrowRight" && adim < KOREOGRAFI.length-1){ adim++; sunumCiz(); }
   if (e.key === "ArrowLeft"  && adim > 0)                  { adim--; sunumCiz(); }
   if (e.key === "Enter") kostur();
 });
+
+/* ═══ Tema ═══════════════════════════════════════════════════════════════
+   Koyu varsayılan; tercih localStorage'da tutulur ve <head> içindeki erken
+   betik tarafından ilk boyamadan önce uygulanır. Buradaki iş yalnızca
+   düğmenin etiketini güncellemek ve tercihi yazmak.                        */
+function temaYaz(acik){
+  document.documentElement.setAttribute("data-theme", acik ? "light" : "dark");
+  $("#themeBtn").textContent = acik ? "☀ Açık" : "☾ Koyu";
+  try { localStorage.setItem("qadaptive-tema", acik ? "light" : "dark"); }
+  catch (e) { /* localStorage yoksa tema yine de bu oturumda geçerli */ }
+}
+function temaAcikMi(){
+  return document.documentElement.getAttribute("data-theme") === "light";
+}
+temaYaz(temaAcikMi());                       // düğme etiketini durumla eşitle
+$("#themeBtn").addEventListener("click", ()=> temaYaz(!temaAcikMi()));
 
 /* ═══ Başlat ═════════════════════════════════════════════════════════════ */
 kaydir(); boya(null); saglik();

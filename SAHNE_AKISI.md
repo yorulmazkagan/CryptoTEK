@@ -48,7 +48,7 @@ yürütme izinde yalnızca **ONNX çıkarım** aşaması var.
 
 **Göster:** risk 100 ≥ τ 75 · zırh **ML-DSA-87** · kafes ızgarası
 **4×4'ten 8×7'ye büyüdü** (16 → 56 hücre) · imza çubuğu 2.420 → 4.627 B'ye
-uzadı · şeritte **12 aşama** yandı.
+uzadı · şeritte **11 aşama** yandı.
 
 > **İtiraz:** *"AI'ın kararı kriptografiyi gerçekten etkiliyor mu, yoksa
 > sadece bir etiket mi değişiyor?"*
@@ -57,7 +57,7 @@ uzadı · şeritte **12 aşama** yandı.
 > 4.627 bayta çıktı. Bu sayılar `fips204` kütüphanesinden **ölçüldü**, elle
 > yazılmadı. Denetim öncesinde bu bir JSON metninden ibaretti.
 
-**Şeride işaret et:** 12 aşamanın her birinin süresi ayrı ölçülüyor.
+**Şeride işaret et:** 11 aşamanın her birinin süresi ayrı ölçülüyor. Listede ölçülemeyen tek bir adım bile yok — sayı bu yüzden 11, 12 değil.
 ML-DSA keygen ~0,3 ms, STARK prover ~5 ms. "Arkada ne oluyor" sorusunun
 cevabı bu şerittir.
 

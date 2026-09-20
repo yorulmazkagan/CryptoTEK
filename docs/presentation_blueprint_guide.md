@@ -1629,7 +1629,7 @@ def load_detector(directory: str = MODEL_DIR) -> QAnomalyDetector:
 - **Ek İçerik / Kod Kesiti / Şema**:
 <!-- KOD-SENK kaynak=Q-Adaptive-AI/src/api.py parca=1/2 ic-baslik=evet -->
 ```python
-# src/api.py (Satırlar 1-554)
+# src/api.py (Satırlar 1-557)
 # =============================================================================
 # Q-ADAPTIVE AI Guardian — FastAPI REST + Dashboard Hub (src/api.py)
 # =============================================================================
@@ -2184,6 +2184,9 @@ async def _run_zk_prover_async(
     5. Bu fonksiyon yalnızca _ZK_PROOF_QUEUE bir slot serbest bıraktıktan sonra
        çalışır; kuyruk doluyken asla buraya ulaşılmaz.
 
+    Returns:
+        (prover_time_ms, proof_payload_dict)
+
 ```
 
 
@@ -2216,10 +2219,7 @@ async def _run_zk_prover_async(
 - **Ek İçerik / Kod Kesiti / Şema**:
 <!-- KOD-SENK kaynak=Q-Adaptive-AI/src/api.py parca=2/2 ic-baslik=evet -->
 ```python
-# src/api.py (Satırlar 555-1107)
-    Returns:
-        (prover_time_ms, proof_payload_dict)
-
+# src/api.py (Satırlar 558-1112)
     Raises:
         RuntimeError: Binary bulunamazsa veya sıfır olmayan çıkış kodu döndürürse.
     """
@@ -2628,14 +2628,19 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
             payload_run_id = proof_data.get("run_id")
             deterministic  = proof_data.get("deterministic_run")
 
-            # Payload yazma, süresi ölçülemediği için bir AŞAMA değil
-            # (bkz. main.rs'teki not) — tamamlanma işareti olarak eklenir.
-            pipeline_stages.append({
-                "name"  : "payload_yazma",
-                "ms"    : 0.0,
-                "ok"    : True,
-                "detail": "proof_payload.json yazıldı (süre ölçülmedi)",
-            })
+            # NOT: Buraya bir "payload_yazma" aşaması EKLENMİYOR.
+            #
+            # Rust tarafı bu aşamayı bilinçli olarak listeye koymuyor
+            # (bkz. main.rs ve `pipeline::tests::olculmeyen_asama_listeye_girmiyor`):
+            # prover kendi dosya yazımını ölçemez, süre her zaman 0.000 ms
+            # çıkar. Python bir süre bunu "tamamlanma işareti" olarak geri
+            # ekliyordu — ama arayüzdeki şeridin başlığı
+            # "YÜRÜTME İZİ · HER SÜRE ÖLÇÜLDÜ" ve orada iri puntoyla
+            # `0.00 ms` görünüyordu. Açıklamasında "süre ölçülmedi" yazması
+            # yetmez; ekrandaki sayı ölçülmüş gibi duruyordu.
+            #
+            # Payload'ın yazıldığı zaten kanıtlanıyor: dosya okunamasaydı
+            # bu kod yoluna hiç girilmezdi.
 
             logger.info(
                 "ZK payload — boyut=%.2f KB, süre=%.1f ms, imza=%d B, "
@@ -6912,7 +6917,7 @@ contract QAdaptiveAccount {
 - **Görsel Yerleşim**: Sade beyaz arka plan. Solda Dynamics 365 proje takip maddeleri, sağda temiz tablo veya minimalist vektör grafikler.
 - **Metin İçeriği**:
 
-  * Faz 6.0 (Kapsamlı Test & Audit): 242 otomatik test (Rust 61 · Solidity 121 · sözleşme 7 · attestation 18 · katman eşitliği 9) ve fuzz testleri bu fazda koşturulmuştur.
+  * Faz 6.0 (Kapsamlı Test & Audit): 243 otomatik test (Rust 61 · Solidity 121 · sözleşme 7 · attestation 18 · katman eşitliği 9) ve fuzz testleri bu fazda koşturulmuştur.
 
   * Bağımsız güvenlik denetimleri (audit) ve EVM gas optimizasyonları bu aşamada devam etmektedir.
 
@@ -6996,7 +7001,7 @@ contract QAdaptiveAccount {
 - **Görsel Yerleşim**: Sade beyaz arka plan. Solda Dynamics 365 proje takip maddeleri, sağda temiz tablo veya minimalist vektör grafikler.
 - **Metin İçeriği**:
 
-  * WBS 6.1 - 6.4 kapsamında; 242 otomatik test, fuzz stres testleri ve EVM gaz optimizasyon iş paketleri yürütülmektedir.
+  * WBS 6.1 - 6.4 kapsamında; 243 otomatik test, fuzz stres testleri ve EVM gaz optimizasyon iş paketleri yürütülmektedir.
 
   * Kritik Yol (Critical Path) analizimizde; Rust Winterfell constraints inşası ve Solidity validateUserOp doğrulama adımları en kritik eşiklerdir.
 
@@ -7239,7 +7244,7 @@ contract QAdaptiveAccount {
 - **Görsel Yerleşim**: Sade beyaz arka plan. Solda sprint ilerlemeleri, sağda temiz tablo veya minimalist yeşil renk kodlu şemalar.
 - **Metin İçeriği**:
 
-  * Uçtan uca sistem entegrasyonu kapsamında 242 otomatik testin doğrulama koşuları her CI koşusunda yürütülmektedir.
+  * Uçtan uca sistem entegrasyonu kapsamında 243 otomatik testin doğrulama koşuları her CI koşusunda yürütülmektedir.
 
   * QA fuzzing stres testleri altında sistemin DoS engelleme başarı oranları ölçülmektedir.
 
@@ -7516,7 +7521,7 @@ contract QAdaptiveAccount {
 
   * Bu maliyet, post-kuantum imzasının doğrudan zincir üstü doğrulanmasına kıyasla 23 kat daha ucuzdur.
 
-  * Test matrisimiz kapsamında 242 otomatik testin tamamı başarıyla geçmektedir; her biri bir denetim bulgusunun geri gelmesini engeller.
+  * Test matrisimiz kapsamında 243 otomatik testin tamamı başarıyla geçmektedir; her biri bir denetim bulgusunun geri gelmesini engeller.
 
   * Birim testlerimizde de Rust, Solidity ve Python modüllerimiz %92'nin üzerinde test kapsamasıyla onaylanmıştır.
 
@@ -7546,7 +7551,7 @@ contract QAdaptiveAccount {
 
   * `[GÖRSEL ÜRETİM PROMPT BOX]`: "Minimalist flat vector icon representing a clean success table, solid white background --ar 16:9"
 
-  * `[JÜRİ SÖZEL AÇIKLAMA METNİ]`: Solidity cüzdanımızın ölçülen gaz tüketimi ve 242 testlik matrisimiz projemizin kararlılığını göstermektedir.
+  * `[JÜRİ SÖZEL AÇIKLAMA METNİ]`: Solidity cüzdanımızın ölçülen gaz tüketimi ve 243 testlik matrisimiz projemizin kararlılığını göstermektedir.
 
   * `[SABLON NOTU TEMIZLIGI ONAYI]`: Şablonda yer alan tüm açıklayıcı ve yönlendirici notlar tamamen temizlenmiştir.
 

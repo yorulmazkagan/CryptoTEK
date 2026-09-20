@@ -5,7 +5,7 @@
 ---
 
 > [!NOTE]
-> Bu rapor; `Q-Adaptive-AI` (FastAPI + ONNX), `Q-Adaptive-ZK` (Rust + Winterfell STARK Prover) ve `Q-Adaptive-Contracts` (Solidity Akıllı Cüzdan) bileşenlerinin bütünleşik çalışma senaryolarını, uçtan uca ağ simülasyonlarını ve matematiksel modelleme çıktılarını içerir. Tüm testler sıfır hata ile tamamlanmıştır: **Rust 61 · Solidity 146 · API↔arayüz sözleşmesi 8 · attestation kriptosu 18 · katmanlar arası eşitlik 9 = 242 otomatik test.** Sayılar `cargo test`, `forge test` ve `python3 Q-Adaptive-AI/test_*.py` komutlarıyla yeniden üretilebilir.
+> Bu rapor; `Q-Adaptive-AI` (FastAPI + ONNX), `Q-Adaptive-ZK` (Rust + Winterfell STARK Prover) ve `Q-Adaptive-Contracts` (Solidity Akıllı Cüzdan) bileşenlerinin bütünleşik çalışma senaryolarını, uçtan uca ağ simülasyonlarını ve matematiksel modelleme çıktılarını içerir. Tüm testler sıfır hata ile tamamlanmıştır: **Rust 61 · Solidity 146 · API↔arayüz sözleşmesi 9 · attestation kriptosu 18 · katmanlar arası eşitlik 9 = 243 otomatik test.** Sayılar `cargo test`, `forge test` ve `python3 Q-Adaptive-AI/test_*.py` komutlarıyla yeniden üretilebilir.
 
 ---
 

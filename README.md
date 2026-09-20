@@ -13,7 +13,7 @@
 <br/>
 <br/>
 
-<img src="https://img.shields.io/badge/Tests-242%20Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white" alt="242 tests passing"/>
+<img src="https://img.shields.io/badge/Tests-243%20Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white" alt="243 tests passing"/>
 <img src="https://img.shields.io/badge/ONNX%20Latency-measured%20per%20run-00B4D8?style=for-the-badge" alt="ONNX latency measured per run"/>
 <img src="https://img.shields.io/badge/STARK%20Proof%20Size-measured%20per%20run-blueviolet?style=for-the-badge" alt="STARK proof size measured per run"/>
 <img src="https://img.shields.io/badge/Prover%20Time-measured%20per%20run-blue?style=for-the-badge" alt="Prover time measured per run"/>
@@ -308,7 +308,7 @@ function validateUserOp(
 
 ## 5. Measured Benchmark Metrics
 
-> **Nothing here is "certified."** An earlier revision of this section called these *certified results* and cited `12/12 tests passing`. No independent body certified anything — these are our own measurements. The suite is now **242 automated tests** (Rust 61 · Solidity 146 · parity 9 · attestation 18 · API-contract 8).
+> **Nothing here is "certified."** An earlier revision of this section called these *certified results* and cited `12/12 tests passing`. No independent body certified anything — these are our own measurements. The suite is now **243 automated tests** (Rust 61 · Solidity 146 · parity 9 · attestation 18 · API-contract 9).
 
 All numbers below were measured on a single development machine and vary with hardware. Every timing is re-measured on each run and written into the API response, so you can check them yourself instead of trusting this table.
 
@@ -381,39 +381,115 @@ The ~98.2% saving is achieved through the combination of:
 
 ## 6. Dashboard Gallery
 
-The Q-ADAPTIVE AI Guardian HUD is a Light-Theme Glassmorphic single-page application that provides real-time operational telemetry across four analytical panels.
+Every screenshot below was captured from a **live run**, not a mock. The capture
+script starts a real server, clicks the *Drainer* scenario, presses *Run*, and
+waits for the Rust prover to finish before taking the picture:
+
+```bash
+cd Q-Adaptive-AI && python3 run_server.py      # terminal 1
+python3 scripts/capture_screenshots.py         # terminal 2
+```
+
+> **Correction.** The previous revision of this section showed a four-tab
+> "glassmorphic" dashboard that no longer exists, and the capture script it
+> came from requested `?tab=telemetri&mock=drainer` — those images were
+> rendered from **mock data**. The UI is now a single causality-ordered screen
+> and the screenshots come from measured runs.
+
+The console defaults to a dark theme for projection in a darkened hall. A light
+theme is available via the **☾ / ☀** button or the `T` key, and the preference
+persists across reloads.
 
 ---
 
-### Tab 1 — Live Telemetry Panel
+### Full console
 
-![Live Telemetry Panel](./images/telemetri.png)
+| Dark (default) | Light |
+|---|---|
+| ![Full console, dark theme](./images/00_tam_ekran.png) | ![Full console, light theme](./images/00_tam_ekran_acik.png) |
 
-**Caption:** The Live Telemetry panel renders the 3-dimensional feature vector in real time. The top-left section displays the current Normalized Anomaly Score (NAS) as a gradient ring meter. Below it, individual feature channels — gas bid delta, calldata entropy, nonce distance — are rendered as sparkline strips with EWMA overlay. The frosted-glass card cluster on the right shows a rolling 60-second sliding window of the Isolation Forest raw score distribution, color-coded from safety green (NAS < 0.30) through amber (NAS 0.30–0.72) to threat red (NAS ≥ 0.72). The panel updates at 500ms cadence.
-
----
-
-### Tab 2 — Simulation Injector Panel
-
-![Simulation Injector Panel](./images/enjektor.png)
-
-**Caption:** The Simulation Injector panel allows manual injection of three canonical threat profiles into the live inference pipeline: **Standard User** (benign baseline), **MEV Bot** (high-frequency sandwich attack pattern), and **Wallet Drainer** (low-frequency, high-entropy exfiltration pattern). Each profile populates the three feature sliders with pre-calibrated adversarial vectors. The pipeline response — ONNX inference result, asyncio queue depth, ZK proof generation trigger — is displayed in the glassmorphic log terminal at the bottom of the panel in real time. This component is the primary integration test harness for the full 4-stage pipeline.
+The screen reads left to right, top to bottom: transaction → inference → armor
+→ proof, then the execution trace, then the lattice and the reasoning behind
+the decision, and finally the limits panel.
 
 ---
 
-### Tab 3 — ZK-STARK Logic Panel
+### 1 — Status strip
 
-![ZK-STARK Logic Panel](./images/stark_mantigi.png)
+![Status strip](./images/01_ust_serit.png)
 
-**Caption:** The ZK-STARK Logic panel exposes the internal state of the Winterfell prover in human-readable form. The top section displays the three AIR constraint evaluations (epoch monotonicity, commitment binding, anomaly gate) as real-time numerical fields that update after each proof generation event. The center section contains a proof trace heatmap: each row represents an execution trace row, and each column represents a register (COL_EPOCH, COL_COMMIT, COL_NAS), with intensity indicating the field element magnitude. The bottom section renders the serialized proof JSON and the certified metrics: prover time, proof size, and STARK security bits (80) — all read from the payload produced by that run, not hard-coded. A copy-to-clipboard button exports the proof payload for direct use in the `validateUserOp` call.
+Connection state, run id, the dynamic threshold τ(t), the selected armor tier,
+whether the run was deterministic, and the current queue depth. When the server
+goes away this strip turns red and **all 38 bound fields reset to `—`** — the UI
+never falls back to sample data.
 
 ---
 
-### Tab 4 — On-Chain State Monitor
+### 2 — Causality: transaction → inference → armor → proof
 
-![On-Chain State Monitor](./images/zincir_izleyici.png)
+![Causality cards](./images/02_nedensellik.png)
 
-**Caption:** The On-Chain State Monitor provides a live read-out of the `QAdaptiveAccount` contract state on the target EVM network. The header card displays the current key epoch index, the active post-quantum commitment root (truncated hex), and the gas sponsorship balance in the `QAdaptivePaymaster`. Below, a timeline chart shows the history of epoch rotation events, each annotated with the triggering UserOperation hash and the block number. The bottom section contains a transaction receipt decoder that parses the `UserOperationEvent` log emitted by the ERC-4337 EntryPoint, confirming that `validateUserOp` returned `SIG_VALIDATION_SUCCESS` (return code 0) for each STARK-verified operation. The L2 calldata saving ratio (measured per run, ~98.2%) is displayed as a pill badge in the top-right corner of the card.
+The four cards are the whole argument in one row. Card 1 holds the three input
+features and the scenario buttons. Card 2 shows the Isolation Forest score
+against τ(t), plus the measured ONNX inference time. Card 3 reports the armor
+tier chosen by that comparison, with the real FIPS 204 key and signature sizes
+and a live tamper check. Card 4 carries the STARK result: proof size, prover
+time, security bits, and the calldata saving.
+
+Note the last row of card 4: **`beats ECDSA → no (ECDSA is smaller)`**. Fifty
+ECDSA signatures are 3,250 bytes, smaller than a single STARK proof. The UI
+states this instead of hiding it; the trade being made is post-quantum
+security, not calldata size.
+
+---
+
+### 3 — Execution trace, every duration measured
+
+![Execution trace](./images/03_yurutme_izi.png)
+
+Eleven stages, each timed separately, from ONNX inference through ρ' derivation,
+lattice expansion, ML-DSA keygen/sign/verify, the live tamper test, the trace
+table, the STARK prover, and local verification.
+
+There are eleven stages rather than twelve on purpose. A `payload_yazma`
+("payload written") stage used to sit at the end reporting `0.00 ms` — the
+prover cannot time its own file write. A strip titled *every duration measured*
+must not contain an entry that was never measured, so it was removed from both
+the Rust and the Python side, and tests on both sides keep it out.
+
+---
+
+### 4 — Lattice growth, signature lengths, decision rationale
+
+![Lattice and decision](./images/04_kafes_ve_karar.png)
+
+The grid on the left is the actual `k × ℓ` lattice expanded from ρ' by
+SHAKE-128 with rejection sampling — 8×7 = 56 cells at the ML-DSA-87 tier, cell
+colour tracking magnitude. Change one bit of ρ' and every cell changes.
+
+The middle column compares the three ML-DSA signature sizes against an ECDSA
+reference bar, drawn from the measured values rather than the FIPS table. The
+right column spells out why this run ended where it did, in the order the code
+actually evaluated it.
+
+---
+
+### 5 — What we do not claim
+
+![Limits panel](./images/05_iddia_etmedik.png)
+
+This panel is permanent, not a footnote. It is the on-stage form of the lesson
+that produced this audit: state the limits before a juror finds them.
+
+It says, among other things, that the STARK **does not prove ML-DSA
+verification in-circuit**, that the proof is **succinct but hides no secret**
+(ρ' is published on this very screen, so s1, s2 and the matrix A can be
+recomputed by anyone — the "zero-knowledge" here is nominal; we chose
+reproducibility over privacy so the jury can regenerate the same proof), that
+the proof is **not verified on-chain**, and that **no independent security
+audit and no mainnet deployment** exist.
+
+A test reads this panel and fails the build if any of these entries is removed.
 
 ---
 
@@ -461,16 +537,19 @@ Q-ADAPTIVE (AI Guardian)
 │       └── interfaces/                ← IWinterfellVerifier, IEntryPoint stubs
 │
 ├── stitch_q_adaptive_ai_guardian_dashboards/
-│   └── index.html                     ← Light-Theme Glassmorphic HUD (single file)
+│   ├── index.html                     ← Causality console, single file, zero CDN
+│   └── index.legacy.html              ← Pre-audit four-tab dashboard (kept for reference)
 │
-├── images/
-│   ├── telemetri.png                  ← Tab 1: Live Telemetry Panel screenshot
-│   ├── enjektor.png                   ← Tab 2: Simulation Injector screenshot
-│   ├── stark_mantigi.png              ← Tab 3: ZK-STARK Logic Panel screenshot
-│   └── zincir_izleyici.png            ← Tab 4: On-Chain State Monitor screenshot
+├── images/                            ← Generated by scripts/capture_screenshots.py
+│   ├── 00_tam_ekran*.png              ← Full console, dark + light
+│   ├── 01_ust_serit*.png              ← Status strip
+│   ├── 02_nedensellik*.png            ← Transaction -> inference -> armor -> proof
+│   ├── 03_yurutme_izi*.png            ← 11-stage execution trace
+│   ├── 04_kafes_ve_karar*.png         ← Lattice, signature lengths, rationale
+│   └── 05_iddia_etmedik*.png          ← Limits panel
 │
 ├── docs/
-│   ├── integration_test_report.md     ← Integration test report (242 tests)
+│   ├── integration_test_report.md     ← Integration test report (243 tests)
 │   ├── references_guide.md            ← Academic references & citations
 │   └── presentation_blueprint_guide.md
 │
@@ -608,9 +687,9 @@ is an estimate.
 | Rust (ZK + PQC) | `cd Q-Adaptive-ZK && cargo test` | **61 passed** |
 | Solidity | `cd Q-Adaptive-Contracts && forge test` | **142 passed** (4 fork tests skip without `ETH_RPC_URL`) |
 | Cross-layer parity | `python3 Q-Adaptive-AI/test_layer_parity.py` | **9 passed** |
-| API ↔ UI contract | `python3 Q-Adaptive-AI/test_api_contract.py` | **8 passed** (38 bound fields verified) |
+| API ↔ UI contract | `python3 Q-Adaptive-AI/test_api_contract.py` | **9 passed** (38 bound fields verified) |
 | Attestation crypto | `python3 Q-Adaptive-AI/test_attestation.py` | **18 passed** |
-| **Total (automated tests)** | | **242 passed** |
+| **Total (automated tests)** | | **243 passed** |
 | ONNX ↔ sklearn parity | `cd Q-Adaptive-AI && python3 test_onnx_inference.py` | 3 scenarios, exit 0 |
 | API integration | `cd Q-Adaptive-AI && python3 test_api_client.py` | requires a running server |
 

@@ -963,14 +963,19 @@ async def predict(payload: TransactionPayload) -> ExtendedPredictResponse:
             payload_run_id = proof_data.get("run_id")
             deterministic  = proof_data.get("deterministic_run")
 
-            # Payload yazma, süresi ölçülemediği için bir AŞAMA değil
-            # (bkz. main.rs'teki not) — tamamlanma işareti olarak eklenir.
-            pipeline_stages.append({
-                "name"  : "payload_yazma",
-                "ms"    : 0.0,
-                "ok"    : True,
-                "detail": "proof_payload.json yazıldı (süre ölçülmedi)",
-            })
+            # NOT: Buraya bir "payload_yazma" aşaması EKLENMİYOR.
+            #
+            # Rust tarafı bu aşamayı bilinçli olarak listeye koymuyor
+            # (bkz. main.rs ve `pipeline::tests::olculmeyen_asama_listeye_girmiyor`):
+            # prover kendi dosya yazımını ölçemez, süre her zaman 0.000 ms
+            # çıkar. Python bir süre bunu "tamamlanma işareti" olarak geri
+            # ekliyordu — ama arayüzdeki şeridin başlığı
+            # "YÜRÜTME İZİ · HER SÜRE ÖLÇÜLDÜ" ve orada iri puntoyla
+            # `0.00 ms` görünüyordu. Açıklamasında "süre ölçülmedi" yazması
+            # yetmez; ekrandaki sayı ölçülmüş gibi duruyordu.
+            #
+            # Payload'ın yazıldığı zaten kanıtlanıyor: dosya okunamasaydı
+            # bu kod yoluna hiç girilmezdi.
 
             logger.info(
                 "ZK payload — boyut=%.2f KB, süre=%.1f ms, imza=%d B, "

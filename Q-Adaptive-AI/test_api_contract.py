@@ -195,6 +195,41 @@ class UydurmaVeriTest(unittest.TestCase):
             "yalnızca jürinin bulmasını bekler.",
         )
 
+    def test_olculmeyen_asama_python_tarafindan_eklenmiyor(self):
+        """`payload_yazma` aşaması API tarafından geri eklenmemeli.
+
+        Rust bu aşamayı bilinçli olarak listelemez — prover kendi dosya
+        yazımını ölçemez, süre her zaman 0.000 ms çıkar. `pipeline.rs`
+        içindeki `olculmeyen_asama_listeye_girmiyor` testi Rust tarafını
+        koruyordu, ama Python katmanı aynı aşamayı "tamamlanma işareti"
+        olarak GERİ EKLİYORDU.
+
+        Sonuç ekranda şöyle görünüyordu: başlığı
+        "YÜRÜTME İZİ · HER SÜRE ÖLÇÜLDÜ" olan şeritte iri puntoyla
+        `0.00 ms`. Açıklama satırında "süre ölçülmedi" yazması yetmez.
+
+        Bir katmanda kapatılan bir bulgu, diğer katmanda geri açılabiliyorsa
+        kapatılmamıştır.
+        """
+        kaynak = (
+            Path(__file__).resolve().parent / "src" / "api.py"
+        ).read_text(encoding="utf-8")
+
+        # Yorumlar serbest: kararın gerekçesi kodda yazılı kalmalı.
+        kod = "\n".join(
+            s for s in kaynak.split("\n") if not s.lstrip().startswith("#")
+        )
+
+        self.assertNotIn(
+            '"name"  : "payload_yazma"', kod,
+            "api.py ölçülemeyen `payload_yazma` aşamasını listeye geri ekliyor. "
+            "Rust bu aşamayı kasıtlı olarak dışarıda bırakıyor.",
+        )
+        self.assertNotIn(
+            '"payload_yazma"', kod,
+            "api.py `payload_yazma` aşamasını bir biçimde listeye ekliyor.",
+        )
+
     def test_baglanti_yoksa_temizleniyor(self):
         """Bağlantı koptuğunda arayüz her şeyi temizlemeli."""
         self.assertIn(
