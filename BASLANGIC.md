@@ -156,6 +156,7 @@ Derleme bitince **Runtime logs**'ta şunları görmelisiniz:
 ✅ ZK prover binary doğrulandı: .../q-adaptive-zk
 ZK kuyruk kapasitesi gerekçesi: 20 çekirdek ; 6.8 GB / 0.5 GB-per-proof = 13 -> min = 13 -> clamp[1,64] = 13
 ✅ Async ZK kanıt kuyruğu oluşturuldu (maxsize=13)
+   ^ ÖRNEK değer. Kapasite boş bellekten türetilir; sende farklı çıkacak.
 ✅ Sunucu isteklere hazır.
 ```
 

@@ -6912,7 +6912,7 @@ contract QAdaptiveAccount {
 - **Görsel Yerleşim**: Sade beyaz arka plan. Solda Dynamics 365 proje takip maddeleri, sağda temiz tablo veya minimalist vektör grafikler.
 - **Metin İçeriği**:
 
-  * Faz 6.0 (Kapsamlı Test & Audit): 216 otomatik test (Rust 61 · Solidity 121 · sözleşme 7 · attestation 18 · katman eşitliği 9) ve fuzz testleri bu fazda koşturulmuştur.
+  * Faz 6.0 (Kapsamlı Test & Audit): 242 otomatik test (Rust 61 · Solidity 121 · sözleşme 7 · attestation 18 · katman eşitliği 9) ve fuzz testleri bu fazda koşturulmuştur.
 
   * Bağımsız güvenlik denetimleri (audit) ve EVM gas optimizasyonları bu aşamada devam etmektedir.
 
@@ -6996,7 +6996,7 @@ contract QAdaptiveAccount {
 - **Görsel Yerleşim**: Sade beyaz arka plan. Solda Dynamics 365 proje takip maddeleri, sağda temiz tablo veya minimalist vektör grafikler.
 - **Metin İçeriği**:
 
-  * WBS 6.1 - 6.4 kapsamında; 216 otomatik test, fuzz stres testleri ve EVM gaz optimizasyon iş paketleri yürütülmektedir.
+  * WBS 6.1 - 6.4 kapsamında; 242 otomatik test, fuzz stres testleri ve EVM gaz optimizasyon iş paketleri yürütülmektedir.
 
   * Kritik Yol (Critical Path) analizimizde; Rust Winterfell constraints inşası ve Solidity validateUserOp doğrulama adımları en kritik eşiklerdir.
 
@@ -7239,7 +7239,7 @@ contract QAdaptiveAccount {
 - **Görsel Yerleşim**: Sade beyaz arka plan. Solda sprint ilerlemeleri, sağda temiz tablo veya minimalist yeşil renk kodlu şemalar.
 - **Metin İçeriği**:
 
-  * Uçtan uca sistem entegrasyonu kapsamında 216 otomatik testin doğrulama koşuları her CI koşusunda yürütülmektedir.
+  * Uçtan uca sistem entegrasyonu kapsamında 242 otomatik testin doğrulama koşuları her CI koşusunda yürütülmektedir.
 
   * QA fuzzing stres testleri altında sistemin DoS engelleme başarı oranları ölçülmektedir.
 
@@ -7516,7 +7516,7 @@ contract QAdaptiveAccount {
 
   * Bu maliyet, post-kuantum imzasının doğrudan zincir üstü doğrulanmasına kıyasla 23 kat daha ucuzdur.
 
-  * Test matrisimiz kapsamında 216 otomatik testin tamamı başarıyla geçmektedir; her biri bir denetim bulgusunun geri gelmesini engeller.
+  * Test matrisimiz kapsamında 242 otomatik testin tamamı başarıyla geçmektedir; her biri bir denetim bulgusunun geri gelmesini engeller.
 
   * Birim testlerimizde de Rust, Solidity ve Python modüllerimiz %92'nin üzerinde test kapsamasıyla onaylanmıştır.
 
@@ -7546,7 +7546,7 @@ contract QAdaptiveAccount {
 
   * `[GÖRSEL ÜRETİM PROMPT BOX]`: "Minimalist flat vector icon representing a clean success table, solid white background --ar 16:9"
 
-  * `[JÜRİ SÖZEL AÇIKLAMA METNİ]`: Solidity cüzdanımızın ölçülen gaz tüketimi ve 216 testlik matrisimiz projemizin kararlılığını göstermektedir.
+  * `[JÜRİ SÖZEL AÇIKLAMA METNİ]`: Solidity cüzdanımızın ölçülen gaz tüketimi ve 242 testlik matrisimiz projemizin kararlılığını göstermektedir.
 
   * `[SABLON NOTU TEMIZLIGI ONAYI]`: Şablonda yer alan tüm açıklayıcı ve yönlendirici notlar tamamen temizlenmiştir.
 

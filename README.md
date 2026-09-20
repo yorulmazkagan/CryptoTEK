@@ -13,7 +13,7 @@
 <br/>
 <br/>
 
-<img src="https://img.shields.io/badge/Tests-216%20Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white" alt="216 tests passing"/>
+<img src="https://img.shields.io/badge/Tests-242%20Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white" alt="242 tests passing"/>
 <img src="https://img.shields.io/badge/ONNX%20Latency-measured%20per%20run-00B4D8?style=for-the-badge" alt="ONNX latency measured per run"/>
 <img src="https://img.shields.io/badge/STARK%20Proof%20Size-measured%20per%20run-blueviolet?style=for-the-badge" alt="STARK proof size measured per run"/>
 <img src="https://img.shields.io/badge/Prover%20Time-measured%20per%20run-blue?style=for-the-badge" alt="Prover time measured per run"/>
@@ -308,7 +308,7 @@ function validateUserOp(
 
 ## 5. Measured Benchmark Metrics
 
-> **Nothing here is "certified."** An earlier revision of this section called these *certified results* and cited `12/12 tests passing`. No independent body certified anything — these are our own measurements. The suite is now **216 automated tests** (Rust 61 · Solidity 121 · parity 9 · attestation 18 · API-contract 7).
+> **Nothing here is "certified."** An earlier revision of this section called these *certified results* and cited `12/12 tests passing`. No independent body certified anything — these are our own measurements. The suite is now **242 automated tests** (Rust 61 · Solidity 146 · parity 9 · attestation 18 · API-contract 8).
 
 All numbers below were measured on a single development machine and vary with hardware. Every timing is re-measured on each run and written into the API response, so you can check them yourself instead of trusting this table.
 
@@ -456,6 +456,7 @@ Q-ADAPTIVE (AI Guardian)
 ├── Q-Adaptive-Contracts/              ← EVM Solidity ERC-4337 Infrastructure
 │   └── contracts/
 │       ├── QAdaptiveAccount.sol       ← ERC-4337 account, CEI validateUserOp
+│       ├── QAdaptiveAICore.sol        ← On-chain risk oracle (stale ⇒ max armor)
 │       ├── QAdaptivePaymaster.sol     ← Zero-gas sponsorship paymaster
 │       └── interfaces/                ← IWinterfellVerifier, IEntryPoint stubs
 │
@@ -469,7 +470,7 @@ Q-ADAPTIVE (AI Guardian)
 │   └── zincir_izleyici.png            ← Tab 4: On-Chain State Monitor screenshot
 │
 ├── docs/
-│   ├── integration_test_report.md     ← Integration test report (216 tests)
+│   ├── integration_test_report.md     ← Integration test report (242 tests)
 │   ├── references_guide.md            ← Academic references & citations
 │   └── presentation_blueprint_guide.md
 │
@@ -605,15 +606,41 @@ is an estimate.
 | Layer | Command | Result |
 |---|---|---|
 | Rust (ZK + PQC) | `cd Q-Adaptive-ZK && cargo test` | **61 passed** |
-| Solidity | `cd Q-Adaptive-Contracts && forge test` | **121 passed** (4 fork tests skip without `ETH_RPC_URL`) |
+| Solidity | `cd Q-Adaptive-Contracts && forge test` | **142 passed** (4 fork tests skip without `ETH_RPC_URL`) |
 | Cross-layer parity | `python3 Q-Adaptive-AI/test_layer_parity.py` | **9 passed** |
-| API ↔ UI contract | `python3 Q-Adaptive-AI/test_api_contract.py` | **7 passed** (38 bound fields verified) |
+| API ↔ UI contract | `python3 Q-Adaptive-AI/test_api_contract.py` | **8 passed** (38 bound fields verified) |
 | Attestation crypto | `python3 Q-Adaptive-AI/test_attestation.py` | **18 passed** |
-| **Total (automated tests)** | | **216 passed** |
+| **Total (automated tests)** | | **242 passed** |
 | ONNX ↔ sklearn parity | `cd Q-Adaptive-AI && python3 test_onnx_inference.py` | 3 scenarios, exit 0 |
 | API integration | `cd Q-Adaptive-AI && python3 test_api_client.py` | requires a running server |
 
-Of the Solidity tests, 10 are fuzz/invariant tests running 512 cases each.
+### Deployment
+
+Nothing is deployed to any public network yet. The deploy path exists, is
+covered by tests, and has been run end-to-end against a local `anvil` node —
+but "live on Sepolia" is **not** a claim this project can make today.
+
+```bash
+cd Q-Adaptive-Contracts
+cp .env.example .env && $EDITOR .env && source .env
+
+forge script script/Deploy.s.sol:Deploy --rpc-url "$RPC_URL"              # dry run
+forge script script/Deploy.s.sol:Deploy --rpc-url "$RPC_URL" --broadcast  # for real
+```
+
+The script refuses to deploy unless the configured EntryPoint address actually
+contains bytecode, and re-reads every wiring decision from chain afterwards.
+Without that check, deploying to the wrong network would look like a success:
+three contracts land, none of them ever work.
+
+**`QAdaptiveAICore` starts stale on purpose.** A freshly deployed oracle has
+measured nothing, so it reports maximum risk with panic mode **off** until the
+guardian pushes the first reading — strongest armor, no lock-out. The same
+applies if the guardian later goes quiet: reporting low risk would reward an
+attacker for silencing it, and forcing panic mode would brick the wallet at
+exactly the moment the off-chain stack is down.
+
+Of the Solidity tests, 12 are fuzz/invariant tests running 512 cases each.
 
 > **Note on working directory.** `test_onnx_inference.py` and
 > `test_api_client.py` resolve their model/config paths relative to the current

@@ -166,6 +166,8 @@ Ardından **Logs → Container**'da şu satırlar görünmelidir:
 ✅ ZK prover binary doğrulandı: .../q-adaptive-zk
 ZK kuyruk kapasitesi gerekçesi: 20 çekirdek ; 6.8 GB / 0.5 GB-per-proof = 13 → min = 13 → clamp[1,64] = 13
 ✅ Async ZK kanıt kuyruğu oluşturuldu (maxsize=13)
+   ^ bu sayı ÖRNEKTİR — boş belleğe bağlı. Aynı makinede bir sonraki
+     çalıştırmada 7 de çıkabilir; gerekçe satırı hangi hesaptan geldiğini söyler.
 ✅ Sunucu isteklere hazır.
 ```
 

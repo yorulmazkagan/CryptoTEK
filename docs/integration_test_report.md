@@ -5,7 +5,7 @@
 ---
 
 > [!NOTE]
-> Bu rapor; `Q-Adaptive-AI` (FastAPI + ONNX), `Q-Adaptive-ZK` (Rust + Winterfell STARK Prover) ve `Q-Adaptive-Contracts` (Solidity Akıllı Cüzdan) bileşenlerinin bütünleşik çalışma senaryolarını, uçtan uca ağ simülasyonlarını ve matematiksel modelleme çıktılarını içerir. Tüm testler sıfır hata ile tamamlanmıştır: **Rust 61 · Solidity 121 · API↔arayüz sözleşmesi 7 · attestation kriptosu 18 · katmanlar arası eşitlik 9 = 216 otomatik test.** Sayılar `cargo test`, `forge test` ve `python3 Q-Adaptive-AI/test_*.py` komutlarıyla yeniden üretilebilir.
+> Bu rapor; `Q-Adaptive-AI` (FastAPI + ONNX), `Q-Adaptive-ZK` (Rust + Winterfell STARK Prover) ve `Q-Adaptive-Contracts` (Solidity Akıllı Cüzdan) bileşenlerinin bütünleşik çalışma senaryolarını, uçtan uca ağ simülasyonlarını ve matematiksel modelleme çıktılarını içerir. Tüm testler sıfır hata ile tamamlanmıştır: **Rust 61 · Solidity 146 · API↔arayüz sözleşmesi 8 · attestation kriptosu 18 · katmanlar arası eşitlik 9 = 242 otomatik test.** Sayılar `cargo test`, `forge test` ve `python3 Q-Adaptive-AI/test_*.py` komutlarıyla yeniden üretilebilir.
 
 ---
 
@@ -562,13 +562,13 @@ Baseline: Base Threshold = 60.0%, Alpha = 0.15, Beta = 0.08, Window = 50
 
 ### 2.2 TEST CASE 2: High-Frequency Denial of Service Exhaustion (Queue DoS Test)
 *   **Açıklama**: Saldırgan, `/predict` FastAPI endpoint'ine 500ms içinde 60 adet eş zamanlı ve sahte işlem anomali paketi göndererek, sistemin ağır STARK kanıt üretim motorunu kilitlemeye ve sunucuda Out-of-Memory (OOM) hatası tetiklemeye çalışır.
-*   **Doğrulama**: API katmanındaki `asyncio.Queue` koruması devreye girer. Kapasite kadar istek güvenle kuyruğa alınıp asenkron alt süreçlere yönlendirilir; kapasiteyi aşanlar sisteme yük getirmeden anında reddedilir ve ağ geçidinde **HTTP 429** kodu döndürülür. Kapasite makineye göre değişir — bu koşunun yapıldığı makinede 13 slottur (bkz. `/api/health` → `queue_capacity_reason`).
+*   **Doğrulama**: API katmanındaki `asyncio.Queue` koruması devreye girer. Kapasite kadar istek güvenle kuyruğa alınıp asenkron alt süreçlere yönlendirilir; kapasiteyi aşanlar sisteme yük getirmeden anında reddedilir ve ağ geçidinde **HTTP 429** kodu döndürülür. Kapasite yalnızca makineye değil, o andaki **boş belleğe** de bağlıdır: aynı makinede arka arkaya iki koşu 13 ve 7 verebilir. Gerçekleşen değer ve hangi hesaptan geldiği `/api/health` → `queue_capacity_reason` alanında yayınlanır.
 
 #### Telemetri Enjeksiyon Konsol Logu
 ```
 === TELEMETRY INJECTION LOGS: SCENARIO 2 (QUEUE DOS STRESS TEST) ===
 Concurrency Level: 60 concurrent payloads within 10ms
-Queue capacity   : 13 slot (bu makinede; _resolve_queue_capacity ile türetildi)
+Queue capacity   : 13 slot (ÖRNEK — boş bellekten türetilir, her koşuda değişebilir)
 --------------------------------------------------------------------------------------------------------------
 [11:34:22.694] [ENT] Request #38 | Queue slot reserved. Active: 38/50.
 [11:34:22.695] [ENT] Request #39 | Queue slot reserved. Active: 39/50.

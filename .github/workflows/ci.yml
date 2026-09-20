@@ -222,6 +222,13 @@ jobs:
       - name: Gas snapshot
         run: forge test --gas-report
 
+      # Konuşlandırma betiği derlenmeli ve kuru koşuda kendi ön/son
+      # kontrollerini geçmeli. `test/Deploy.t.sol` bunu zaten `forge test`
+      # içinde yapıyor; bu adım betiğin CLI yolunun da bozulmadığını
+      # doğruluyor — betik derlenmezse yarışma gunu fark edilirdi.
+      - name: Deploy script derleniyor mu
+        run: forge build --skip test
+
   # ───────────────────────────────────────────────────────────────────────────
   # Regresyon korumaları — düzeltilen hataların sessizce geri gelmesini engeller
   # ───────────────────────────────────────────────────────────────────────────

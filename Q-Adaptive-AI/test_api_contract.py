@@ -161,6 +161,40 @@ class UydurmaVeriTest(unittest.TestCase):
             "Bu değerler ölçülmüş değil, elle yazılmıştı.",
         )
 
+    def test_sinirlar_paneli_eksiksiz(self):
+        """«İddia Etmediklerimiz» paneli, bilinen her sınırı saymalı.
+
+        Bu panel, denetimin asıl dersinin sahnedeki karşılığı: jüri bir sınırı
+        bizden ÖNCE bulmasın. Bir madde sessizce silinirse — ya da yeni bir
+        sınır ortaya çıkıp panele eklenmezse — bu test kırılır.
+
+        Özellikle «sıfır bilgi» maddesi: ρ' arayüzde yayınlandığı için s1, s2
+        ve A matrisi herkesçe yeniden hesaplanabilir. Yani kanıt özlüdür ama
+        bir sır gizlemez. Bunu söylemezsek, soran ilk jüri üyesinde yakalanırız.
+        """
+        panel = self.html.split('id="limits"', 1)
+        self.assertEqual(len(panel), 2, "«İddia Etmediklerimiz» paneli kayıp")
+        panel = panel[1].split("</div>", 1)[0]
+
+        zorunlu = {
+            "STARK ML-DSA doğrulamıyor": "devre içinde ispatlamıyor",
+            "ZK nominal — sır gizlenmiyor": "gizlediği bir sır yok",
+            "rotasyon zorluk artırmıyor": "artırmıyor",
+            "AI kuantum tespit etmiyor": "kuantum saldırısı tespit etmiyor",
+            "eğitim verisi sentetik": "kontrollü sentetik",
+            "zincirde doğrulanmıyor": "zincirde doğrulanmıyor",
+            "denetim/konuşlandırma yok": "yapılmadı",
+            "ECDSA calldata'da kazanıyor": "bir STARK kanıtından küçük",
+        }
+
+        eksik = [ad for ad, iz in zorunlu.items() if iz not in panel]
+        self.assertEqual(
+            eksik, [],
+            f"Sınırlar panelinden şu madde(ler) düşmüş: {eksik}. "
+            "Bir sınırı panelden çıkarmak, onu ortadan kaldırmaz — "
+            "yalnızca jürinin bulmasını bekler.",
+        )
+
     def test_baglanti_yoksa_temizleniyor(self):
         """Bağlantı koptuğunda arayüz her şeyi temizlemeli."""
         self.assertIn(

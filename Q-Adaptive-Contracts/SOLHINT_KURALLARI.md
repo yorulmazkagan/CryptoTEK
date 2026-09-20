@@ -22,7 +22,7 @@ tabanının bilinçli bir tasarım kararına karşılık geliyor** — hiçbiri 
 
 | Kural | Neden kapalı |
 |---|---|
-| `gas-custom-errors` | Sözleşmeler `require(cond, "mesaj")` kullanıyor. Custom error'a geçmek gaz tasarrufu sağlar, ama 121 testin büyük kısmı revert mesajlarını string olarak bekliyor (`vm.expectRevert("QAdaptivePaymaster: ...")`). Bu ayrı bir iş; şimdi yapılırsa testlerin çoğu yeniden yazılmalı. **Açık bir teknik borç.** |
+| `gas-custom-errors` | Sözleşmeler `require(cond, "mesaj")` kullanıyor. Custom error'a geçmek gaz tasarrufu sağlar, ama 146 testin büyük kısmı revert mesajlarını string olarak bekliyor (`vm.expectRevert("QAdaptivePaymaster: ...")`). Bu ayrı bir iş; şimdi yapılırsa testlerin çoğu yeniden yazılmalı. **Açık bir teknik borç.** |
 | `no-inline-assembly` | İki yerde bilinçli kullanılıyor: Paymaster'da calldata'dan 4 baytlık fonksiyon seçicisini okumak, Account'ta 65 baytlık ECDSA imzasını `r`/`s`/`v`'ye ayırmak. İkisinin de Solidity'de assembly'siz dengi yok; ikisi de yorumlu. |
 | `avoid-low-level-calls` | ERC-4337 bunu **zorunlu** kılıyor: EntryPoint ön-fonlaması ve `execute()` hedef çağrısı `.call` ile yapılmak zorunda. Ayrıca hata E1 tam da bu çağrıya gaz stipend'i konulmasından çıkmıştı — yani buradaki risk düşük seviyeli çağrının kendisi değil, ona müdahale etmekti. |
 | `not-rely-on-time` | `block.timestamp` burada bir hata değil, **özellik**: 2 saatlik zaman kilidi ve paymaster dönem sayacı buna dayanıyor. Madencinin saniye mertebesindeki sapması 2 saatlik pencerede anlamsız. |

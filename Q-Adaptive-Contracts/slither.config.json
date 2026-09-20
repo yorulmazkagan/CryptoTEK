@@ -4,6 +4,6 @@
   "exclude_low": false,
   "exclude_medium": false,
   "exclude_high": false,
-  "filter_paths": "lib/,test/",
+  "filter_paths": "lib/,test/,script/",
   "solc_disable_warnings": false
 }

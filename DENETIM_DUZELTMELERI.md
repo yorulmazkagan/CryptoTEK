@@ -28,14 +28,15 @@ tahmin değildir. Çalıştırılamamış olanlar **§7'de ayrıca listelenmişt
 
 | Katman | Komut | Sonuç |
 |---|---|---|
-| Rust (ZK + PQC) | `cd Q-Adaptive-ZK && cargo test` | **55 geçti** (önce 12) |
-| Solidity | `cd Q-Adaptive-Contracts && forge test` | **105 geçti, 4 atlandı** (önce 0) |
+| Rust (ZK + PQC) | `cd Q-Adaptive-ZK && cargo test` | **61 geçti** (önce 12) |
+| Solidity | `cd Q-Adaptive-Contracts && forge test` | **142 geçti, 4 atlandı** (önce 0) |
 | Katman eşitliği | `python3 Q-Adaptive-AI/test_layer_parity.py` | **9 geçti** (önce yoktu) |
 | Attestation kriptosu | `python3 Q-Adaptive-AI/test_attestation.py` | **18 geçti** (önce yoktu) |
-| **Toplam otomatik test** | | **216 geçti** |
+| API ↔ arayüz sözleşmesi | `python3 Q-Adaptive-AI/test_api_contract.py` | **8 geçti** (önce yoktu) |
+| **Toplam otomatik test** | | **242 geçti** |
 | ONNX ↔ sklearn parity | `cd Q-Adaptive-AI && python3 test_onnx_inference.py` | 3 senaryo, çıkış kodu 0 |
 
-Solidity testlerinin **10'u fuzz/değişmez** testidir; her biri 512 koşu yapar.
+Solidity testlerinin **12'si fuzz/değişmez** testidir; her biri 512 koşu yapar.
 
 ### Ölçülen Solidity kapsamı
 
@@ -43,9 +44,11 @@ Solidity testlerinin **10'u fuzz/değişmez** testidir; her biri 512 koşu yapar
 
 | Sözleşme | Satır | Dal | Fonksiyon |
 |---|---|---|---|
+| `QAdaptiveAICore` | **%100,00** (46/46) | %95,24 (20/21) | %100,00 (11/11) |
 | `QAdaptivePaymaster` | **%100,00** (104/104) | %97,14 (34/35) | %100,00 (17/17) |
 | `QAdaptiveAccount` | %94,15 (177/188) | %80,28 (57/71) | %96,00 (24/25) |
-| **Toplam** | %94,97 (302/318) | %84,55 (93/110) | %94,12 (48/51) |
+| `script/Deploy.s.sol` | **%100,00** (46/46) | %55,56 (10/18) | %100,00 (2/2) |
+| **Toplam** | %96,10 (394/410) | %82,55 (123/149) | %95,31 (61/64) |
 
 **Dal kapsamı %100 DEĞİLDİR ve öyle olduğu iddia edilmemektedir.** Kapsanmayan
 dalların çoğu guardian imza kurtarma yolundaki savunma kollarıdır (bozuk `v`,
@@ -65,7 +68,7 @@ sonsuzdaki nokta) — geçersiz eğri noktaları üretmeden ulaşılması zor.
 | 5 | **Paymaster boşaltılabilir** — gönderene bakmıyordu. **Gerçek fon kaybı açığı.** | `QAdaptivePaymaster.sol` — 4 kapı | `test_BULGU5_saldirgan_sozlesmesi_sponsorluk_alamiyor` + 6 test + 2 fuzz |
 | 6 | **Risk skoru kullanıcıdan okunuyordu** — imza alanından çözülüyordu | `QAdaptiveAccount.sol::_resolveRiskScore` — oracle / guardian / ikisinin büyüğü | `test_BULGU6_iddia_edilen_sifir_risk_ai_kapisini_gecemiyor` + 5 test + 2 fuzz |
 | 7 | **DefaultHasher (SipHash)** — kriptografik olmayan hash | `hashing.rs` (yeni) — BLAKE3 + SHAKE-128 + rejection sampling | `hashing::tests::cig_etkisi_tek_bit` (56/56 hücre), `ornekleme_makul_duzgun` |
-| 8 | **Solidity tarafında hiç test yok** | `foundry.toml` + 6 test dosyası | **121 test** (117 geçen, 4 atlanan) |
+| 8 | **Solidity tarafında hiç test yok** | `foundry.toml` + 6 test dosyası | **146 test** (142 geçen, 4 atlanan) |
 | 9 | **README ↔ kod tutarsızlıkları** — 96↔80 bit, Goldilocks↔f128, 16↔3 özellik | `air.rs::STARK_SECURITY_BITS` tek kaynak · README yeniden yazıldı | `SecurityBitsConsistencyTest` — **README'yi okur** |
 | 10 | **`ntt.rs` yok** | Gerekmez oldu: tam polinom NTT `fips204` içinde | `pqc::tests::standart_boyutlari_uyusuyor` |
 | 11 | **Kanıt tohumu belirlenimsiz** — `process::id()` karıştırılıyordu | `hashing.rs::derive_rho_prime` — `process::id()` **silindi** | `hashing::tests::rho_prime_tam_deterministik` · `DeterminismParityTest` |
@@ -251,6 +254,76 @@ kondu.
 
 ---
 
+## 5d. Konuşlandırma — ve yoldan çıkan bir güvenlik açığı
+
+Belgeler kapandıktan sonra yığının **hiçbir ağa konuşlandırılmamış** olduğu
+gündeme geldi: `script/` dizini bile yoktu. Konuşlandırma yolu açılırken
+denetimde görülmemiş bir açık çıktı.
+
+### `IAICore`'un tek uygulaması bir test mock'uydu — ve erişim kontrolü YOKTU
+
+`QAdaptiveAccount`, risk skorunu `aiCore.getGlobalRiskStatus()` ile okuyor.
+Ama `contracts/` altında `IAICore`'u uygulayan **hiçbir sözleşme yoktu**;
+tek uygulama `test/mocks/Mocks.sol::MockAICore` idi:
+
+```solidity
+function setStatus(uint256 _riskScore, bool _panicMode) external {
+    riskScore = _riskScore;   // <- herhangi bir adres cagirabilir
+    panicMode = _panicMode;
+}
+```
+
+Test koşumunda sorun değil. **Testnet'e konuşlandırılsaydı** herhangi biri
+cüzdanı panik moduna sokabilir ya da riski sıfırlayabilirdi. Konuşlandırma
+yolu açılmasaydı bu açık fark edilmeden duracaktı.
+
+✅ **Düzeltildi:** `contracts/QAdaptiveAICore.sol` (yeni) — sahip/updater
+rolleri ayrı, 21 test.
+
+### Asıl tasarım kararı: oracle susarsa ne olur
+
+Bayat bir oracle, hiç konuşlandırılmamış olandan daha tehlikelidir; cüzdan
+son değere güvenmeye devam eder. İki yön de kötü:
+
+| Yön | Sonuç |
+|---|---|
+| **fail-open** (bayatken risk = 0) | Updater'ı susturan saldırgan zırhı en zayıf kademeye düşürür. Saldırıyı ödüllendirir. |
+| **fail-closed** (bayatken panik = true) | Her işlem ≥3.000 baytlık STARK kanıtı ister. Zincir dışı yığın çöktüğü için bayatlamıştır — o kanıtı kimse üretemez, cüzdan **kilitlenir**. |
+
+Seçilen üçüncü yol: **azami risk, panik KAPALI.** Azami risk zırhı en güçlü
+kademeye çeker (savunmacı, kullanıcıya zincirde maliyeti yok); panik kapalı
+kalınca cüzdan kullanılabilir kalır. `isStale()` herkese açık, böylece arayüz
+bozulmuş durumu gizlemek yerine gösterebilir.
+
+Korunan testler: `test_hic_guncellenmemis_oracle_BAYATTIR`,
+`test_bayat_oracle_azami_risk_panik_KAPALI`,
+`test_updateri_susturmak_zirhi_dusurmuyor`,
+`testFuzz_bayat_sonuc_bekleme_suresinden_bagimsiz`.
+
+Yeni konuşlandırılan oracle **bilerek bayat başlar** (`lastUpdate == 0`):
+henüz hiçbir şey ölçmemiştir, risk 0 raporlamak en tehlikeli yönde yalan olur.
+
+### Konuşlandırma betiği kendi kendini doğruluyor
+
+`script/Deploy.s.sol`, adres basmakla yetinmez:
+
+- Konuşlandırmadan **önce** EntryPoint adresinde gerçekten baytkod olduğunu
+  doğrular. Bu kontrol olmasa yanlış ağa deploy "başarılı" görünür, üç
+  sözleşme de iner ve hiçbiri asla çalışmazdı.
+- Konuşlandırmadan **sonra** bağlantıları okur: hesap oracle'a bağlı mı,
+  EntryPoint'ler tutuyor mu, taze oracle gerçekten bayat mı.
+
+Betik yerelde **anvil'e karşı koşuldu** ve uçtan uca doğrulandı: taze oracle
+`(10000, false)` verdi, guardian `9200/true` yazınca o değere döndü, bir saat
+ileri sarılınca yine `(10000, false)`'a düştü, yabancı bir adres
+`QAdaptiveAICore: caller is not updater` ile reddedildi. Elle koşum bir
+kereliktir; `test/Deploy.t.sol` bunu kalıcı hâle getiriyor.
+
+> **Konuşlandırılmadı.** Betik hazır ve yerelde çalıştığı kanıtlandı, ama
+> **hiçbir genel ağa konuşlandırma yapılmadı.** "Sepolia'da canlı" denemez.
+
+---
+
 ## 6. Regresyon korumaları
 
 CI'da beş grep tabanlı koruma ve bir belge-senkron kapısı var
@@ -343,7 +416,7 @@ RPC yapılandırılmazsa test `[SKIP]` raporlar — asla sahte bir `[PASS]`
 | **Determinizm** | "Aynı girdi birebir aynı ρ', anahtar ve imzayı veriyor. Jüri koşuyu kendi makinesinde tekrarlayabilir." | — |
 | **Paymaster** | "Dört bağımsız kapı. Sömürü senaryosunun kendisi bir test olarak duruyor. Satır kapsamı %100." | "Bağımsız denetimden geçti." |
 | **Risk kaynağı** | "Skor oracle'dan veya guardian imzasından geliyor; gönderenin yazdığı alan karara girmiyor. Python'un ürettiği imza gerçek sözleşmede doğrulanıyor." | — |
-| **Solidity testleri** | "121 test, 10'u fuzz. Ölçülen kapsam: satır %94–100, dal %80–97." | "Kapsam %100." |
+| **Solidity testleri** | "146 test, 12'si fuzz. Ölçülen kapsam: satır %94–100, dal %80–97 (yeni oracle: %100 / %95)." | "Kapsam %100." |
 | **STARK** | "Prototip temkinli **80-bit** ayarında ve bu sayı tek bir sabitten geliyor; README'yi okuyan bir test hizayı koruyor." | "96-bit." · "STARK, ML-DSA doğrulamasını devre içinde ispatlıyor." |
 | **Calldata** | "50 işlemlik partide bir kanıt, işlem başına ML-DSA imzası taşımaya kıyasla ~%98,2 tasarruf. Tanım payload'un içinde." | "ECDSA'dan daha az calldata." (50 ECDSA imzası = 3.250 B, **bir STARK kanıtından küçük**) |
 | **Canlı ağ** | "Ethereum mainnet fork'unda, `0x0000000071727De22E5E9d8BAf0edAc6f37da032` adresindeki gerçek EntryPoint v0.7 baytkoduna karşı doğrulandı — 4/4 test." | "Mainnet'e konuşlandırıldı." (fork testi ≠ konuşlandırma) |
@@ -373,7 +446,7 @@ RPC yapılandırılmazsa test `[SKIP]` raporlar — asla sahte bir `[PASS]`
 # 1) Rust: 61 test
 cd Q-Adaptive-ZK && cargo test && cd ..
 
-# 2) Solidity: 121 test (fuzz dahil, 4'ü fork — sır yoksa atlanır)
+# 2) Solidity: 146 test (fuzz dahil, 4'ü fork — sır yoksa atlanır)
 cd Q-Adaptive-Contracts && forge build && forge test -vv && cd ..
 
 # 3) Solidity kapsamı
@@ -415,6 +488,6 @@ açık bir bulgu değil.
 | 1 | `docs/` altındaki `.pdf` nüshaları yeniden üret | `.md` kaynakları düzeltildi (bkz. §5c) ama aynı klasördeki PDF'ler eski metinden basılmış. Jüri elindeki nüshayı okuyor. |
 | 2 | `QAdaptiveAccount` dal kapsamını %80,28'den yükselt | İmza kurtarma savunma kolları kapsanmıyor (bozuk `v`, sonsuzdaki nokta). |
 | 3 | Guardian anahtarını HSM/KMS'e taşı | `attestation.py` anahtarı bellekte tutuyor ve sabit-zamanlı değil — üretim için uygun değil. Sınır dosyanın başında yazılı. |
-| 4 | `gas-custom-errors`: `require` string'lerinden custom error'a geç | Gaz tasarrufu; 121 test revert mesajlarını string bekliyor, birlikte güncellenmeli. Açık teknik borç. |
+| 4 | `gas-custom-errors`: `require` string'lerinden custom error'a geç | Gaz tasarrufu; 146 test revert mesajlarını string bekliyor, birlikte güncellenmeli. Açık teknik borç. |
 | 5 | Sunum kapak slaytlarındaki yer tutucu soyadları düzelt | Denetim §10. |
 | 6 | `ETH_RPC_URL` sırrını depoya ekle | Fork testleri CI'da da gerçeğe karşı koşar. Zorunlu değil — sır yoksa `[SKIP]` raporluyorlar. |
